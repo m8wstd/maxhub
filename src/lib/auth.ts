@@ -6,6 +6,12 @@ import { cookies } from "next/headers";
 const COOKIE_NAME = "maxhub_session";
 const SESSION_AGE_SECONDS = 60 * 60 * 24 * 7;
 
+export type AuthConfigurationIssue =
+  | "password_hash_missing"
+  | "password_hash_invalid_format"
+  | "session_secret_missing"
+  | "session_secret_too_short";
+
 function sessionSecret() {
   const secret = process.env.MAXHUB_SESSION_SECRET;
   if (!secret || secret.length < 32) {
@@ -32,14 +38,30 @@ function passwordHash() {
   return { salt, hash };
 }
 
-export function isAuthConfigured() {
-  try {
-    passwordHash();
-    sessionSecret();
-    return true;
-  } catch {
-    return false;
+export function getAuthConfigurationIssue(): AuthConfigurationIssue | null {
+  const configuredHash = process.env.MAXHUB_PASSWORD_HASH;
+  if (!configuredHash) return "password_hash_missing";
+
+  const [algorithm, salt, hash] = configuredHash.split("$");
+  if (
+    algorithm !== "scrypt" ||
+    !salt ||
+    !hash ||
+    !/^[\da-f]{32}$/i.test(salt) ||
+    !/^[\da-f]{128}$/i.test(hash)
+  ) {
+    return "password_hash_invalid_format";
   }
+
+  const secret = process.env.MAXHUB_SESSION_SECRET;
+  if (!secret) return "session_secret_missing";
+  if (secret.length < 32) return "session_secret_too_short";
+
+  return null;
+}
+
+export function isAuthConfigured() {
+  return getAuthConfigurationIssue() === null;
 }
 
 export function verifyPassword(password: string) {

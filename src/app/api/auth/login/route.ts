@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { clearSessionCookie, isAuthConfigured, isSameOrigin, setSessionCookie, verifyPassword } from "@/lib/auth";
+import { clearSessionCookie, getAuthConfigurationIssue, isSameOrigin, setSessionCookie, verifyPassword } from "@/lib/auth";
 import { readRequestBody, RequestBodyTooLargeError } from "@/lib/request-body";
 
 const MAX_LOGIN_BYTES = 8_192;
@@ -8,7 +8,9 @@ export async function POST(request: Request) {
   if (!isSameOrigin(request)) {
     return NextResponse.json({ error: "Solicitação inválida." }, { status: 403 });
   }
-  if (!isAuthConfigured()) {
+  const authConfigurationIssue = getAuthConfigurationIssue();
+  if (authConfigurationIssue) {
+    console.error("Authentication configuration invalid:", authConfigurationIssue);
     return NextResponse.json(
       { error: "Configure MAXHUB_PASSWORD_HASH e MAXHUB_SESSION_SECRET no servidor." },
       { status: 503 },
