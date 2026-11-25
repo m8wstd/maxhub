@@ -1,4 +1,4 @@
-# Maxhub
+# MaxHub
 
 Hub pessoal de produtividade para um único usuário: tarefas, notas e prazos, com interface responsiva instalável como PWA.
 

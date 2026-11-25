@@ -3,8 +3,8 @@ import type { MetadataRoute } from "next";
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
-    name: "Maxhub",
-    short_name: "Maxhub",
+    name: "MaxHub",
+    short_name: "MaxHub",
     description: "Tarefas, notas e prazos em um só lugar.",
     start_url: "/",
     display: "standalone",

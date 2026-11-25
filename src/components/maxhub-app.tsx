@@ -174,7 +174,7 @@ function LoginScreen({ onLogin }: { onLogin: (password: string) => Promise<strin
         <div className="brand-mark">m</div>
         <p className="eyebrow">SEU ESPAÇO DE FOCO</p>
         <h1>Que bom ter você aqui.</h1>
-        <p className="text-sm text-muted-foreground">Entre com sua senha para acessar o Maxhub.</p>
+        <p className="text-sm text-muted-foreground">Entre com sua senha para acessar o MaxHub.</p>
         <label className="field-label mt-7" htmlFor="password">Senha</label>
         <input
           autoComplete="current-password"
@@ -573,7 +573,7 @@ export function MaxhubApp() {
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
         <div className="sidebar-brand">
           <div className="brand-mark small">m</div>
-          <span>maxhub</span>
+          <span>MaxHub</span>
           <button className="icon-button sidebar-close" aria-label="Fechar menu" onClick={() => setSidebarOpen(false)}><X size={18} /></button>
         </div>
         <button className={`nav-item ${mode === "today" ? "active" : ""}`} onClick={() => { setGroupId(null); selectedNav("today"); }}>

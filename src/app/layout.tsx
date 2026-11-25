@@ -17,7 +17,7 @@ const quicksand = Quicksand({
 
 export const metadata: Metadata = {
   applicationName: "MaxHub",
-  title: "Maxhub — seu espaço de foco",
+  title: "MaxHub — seu espaço de foco",
   description: "Tarefas, notas e prazos em um só lugar.",
   appleWebApp: {
     capable: true,

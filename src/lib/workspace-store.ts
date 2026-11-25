@@ -98,7 +98,10 @@ export async function readWorkspace() {
 
   try {
     const result = await get(BLOB_PATH, { access: "private", useCache: false });
-    if (!result || result.statusCode !== 200) throw new Error("Workspace blob returned no content.");
+    if (result === null) {
+      return { workspace: emptyWorkspace(), version: null, storageMode: "blob" as const };
+    }
+    if (result.statusCode !== 200) throw new Error("Workspace blob returned no content.");
     if (result.blob.size > MAX_SNAPSHOT_BYTES) throw new Error("Workspace snapshot exceeds the size limit.");
     const parsed: unknown = await new Response(result.stream).json();
     const workspace = parseWorkspace(parsed);

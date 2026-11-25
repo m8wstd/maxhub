@@ -1,6 +1,6 @@
-# Maxhub — Briefing do projeto
+# MaxHub — Briefing do projeto
 
-> Documento-base do Maxhub, organizado segundo a estrutura do briefing do SGTCC. O SGTCC é outro projeto e serve apenas como referência de organização: seus requisitos, atores e escolhas técnicas não são requisitos do Maxhub. Este documento registra as decisões compartilhadas até 25/11/2026; itens sem informação confirmada permanecem como “A definir”.
+> Documento-base do MaxHub, organizado segundo a estrutura do briefing do SGTCC. O SGTCC é outro projeto e serve apenas como referência de organização: seus requisitos, atores e escolhas técnicas não são requisitos do MaxHub. Este documento registra as decisões compartilhadas até 25/11/2026; itens sem informação confirmada permanecem como “A definir”.
 
 ## 1. Tarefas e entregas
 
@@ -20,11 +20,13 @@
 
 - **25/11/2026 — MVP implementado:** código de autenticação individual, grupos, tarefas, notas, calendário, lixeira e interface PWA presente no checkout selecionado.
 - **25/11/2026 — Validações técnicas:** `npm run lint`, `npm run typecheck` e `npm run build` concluíram com sucesso neste checkout.
-- **Pendente:** configurar uma Blob Store privada e `BLOB_READ_WRITE_TOKEN` para testar a persistência e sincronização remotas; esse fluxo não foi exercitado.
+- **25/11/2026 — Blob privado:** teste isolado com o SDK criou, leu e removeu um objeto privado temporário com sucesso, usando as variáveis carregadas pelo Next de `.env.local`.
+- **25/11/2026 — Leitura via aplicação:** depois de tratar `get()` retornando `null` como workspace vazio, `GET /api/data` retornou HTTP 200 com `storageMode: blob`. O teste não examinou nem exibiu tarefas ou notas.
+- **Pendente:** validar gravação e sincronização do snapshot pela aplicação; nenhum `PUT` foi realizado.
 
 ## 2. Visão geral da arquitetura
 
-O Maxhub será um hub pessoal de produtividade, instalável em celular e computador. A experiência deve facilitar a organização de tarefas e notas por grupos, com vistas temporais e calendário. O design de referência enviado pelo usuário inspira-se no Tappsk: interface clara, navegação inferior, listas de tarefas e um painel de detalhes ao lado no desktop. Essa referência visual orienta o produto, sem exigir uma cópia exata.
+O MaxHub será um hub pessoal de produtividade, instalável em celular e computador. A experiência deve facilitar a organização de tarefas e notas por grupos, com vistas temporais e calendário. O design de referência enviado pelo usuário inspira-se no Tappsk: interface clara, navegação inferior, listas de tarefas e um painel de detalhes ao lado no desktop. Essa referência visual orienta o produto, sem exigir uma cópia exata.
 
 ### Módulos previstos
 
@@ -44,7 +46,7 @@ O detalhamento dos módulos e suas relações será definido com as próximas in
 ### Estado técnico do MVP em 25/11/2026
 
 - O acesso usa hash de senha `scrypt` e sessão assinada com HMAC em cookie `HttpOnly`, com validade de sete dias. O logout remove o cookie do navegador; não há revogação server-side de um token já copiado nem limite de tentativas persistente.
-- A implementação de sincronização usa um snapshot JSON privado no Blob, escrita condicional com ETag e tentativa de mesclagem por registro usando `updatedAt`. A sincronização remota ainda depende de uma Blob Store privada e de `BLOB_READ_WRITE_TOKEN`; não foi testada contra uma instância Blob.
+- A implementação de sincronização usa um snapshot JSON privado no Blob, escrita condicional com ETag e tentativa de mesclagem por registro usando `updatedAt`. Se `get()` retornar `null` para um pathname ainda inexistente, a aplicação inicia um workspace vazio em modo Blob. Após essa correção, `GET /api/data` foi validado com HTTP 200 e `storageMode: blob`; tarefas e notas da resposta não foram examinadas. A gravação ainda não foi testada.
 - Em `next dev` sem token, há armazenamento alternativo em `.maxhub-dev/workspace.json`, exclusivo para desenvolvimento e sem sincronização com a Vercel. Não é fallback de produção.
 - O snapshot tem limite de 1 MB. Itens da Lixeira expirados deixam de ser retornados quando o workspace é normalizado e são removidos fisicamente na próxima gravação; não há limpeza agendada.
 - A interface implementa a base PWA e registra o service worker em produção. A prévia Markdown do MVP cobre um subconjunto da sintaxe, não toda a especificação CommonMark.
@@ -123,7 +125,7 @@ O detalhamento dos módulos e suas relações será definido com as próximas in
 
 ### US01 — Tarefas agrupadas
 
-Como único usuário do Maxhub, quero separar tarefas em grupos e consultar uma visão Geral para organizar áreas pessoais e projetos sem perder uma visão completa.
+Como único usuário do MaxHub, quero separar tarefas em grupos e consultar uma visão Geral para organizar áreas pessoais e projetos sem perder uma visão completa.
 
 - **AC1 — Grupos:** tarefas podem ser atribuídas a um grupo, como Faculdade ou um projeto.
 - **AC2 — Geral:** a seção Geral apresenta tarefas de todos os grupos.
@@ -160,13 +162,13 @@ Como único usuário, quero escrever várias notas Markdown soltas num grupo ou 
 
 ### US05 — Acesso seguro
 
-Como único usuário, quero entrar no Maxhub com minha senha pessoal para proteger minhas tarefas e notas.
+Como único usuário, quero entrar no MaxHub com minha senha pessoal para proteger minhas tarefas e notas.
 
 - **Critérios de aceitação:** permitir acesso ao único usuário cadastrado mediante senha válida; demais critérios de segurança a definir.
 
 ### US06 — Instalação e uso mobile
 
-Como usuário, quero instalar o Maxhub no computador ou celular para usá-lo como aplicação.
+Como usuário, quero instalar o MaxHub no computador ou celular para usá-lo como aplicação.
 
 - **AC1:** disponibilizar instalação PWA em plataformas e navegadores compatíveis, priorizando Chrome em Linux, Windows e Android.
 - **AC2:** todas as telas e interações são adaptadas a dispositivos móveis.
@@ -217,12 +219,12 @@ O usuário escreve múltiplas notas Markdown soltas num grupo ou associa notas a
 
 ### Jornada 5 — Acessar como aplicação
 
-O usuário autentica-se com sua senha pessoal, instala o Maxhub como PWA usando Chrome em Linux, Windows ou Android (conforme suporte da plataforma) e usa a interface responsiva.
+O usuário autentica-se com sua senha pessoal, instala o MaxHub como PWA usando Chrome em Linux, Windows ou Android (conforme suporte da plataforma) e usa a interface responsiva.
 
 ## 14. Pontos em aberto
 
 - **Horários e recorrência:** ainda não definido se tarefas terão hora ou recorrência.
-- **Sincronização:** o MVP usa snapshot privado no Blob, ETag e escrita condicional; a sincronização remota ainda precisa de configuração e teste. Blob é armazenamento de objetos, não banco de dados; avaliar um banco se o volume, a concorrência ou os requisitos de auditoria crescerem.
+- **Sincronização:** o acesso ao Blob privado e a leitura GET da aplicação foram confirmados; ainda falta testar a gravação condicional do snapshot sem risco aos dados existentes. Blob é armazenamento de objetos, não banco de dados; avaliar um banco se o volume, a concorrência ou os requisitos de auditoria crescerem.
 - **Offline:** não há modo offline de escrita na aplicação. O arquivo local em `.maxhub-dev` é apenas um recurso de desenvolvimento sem Blob e não sincroniza com outros dispositivos.
 - **Integrações futuras:** quais ferramentas devem ser priorizadas?
 - **Design:** tipografia definida como Quicksand nos títulos e Inter nos textos; ícones, estados vazios e acessibilidade podem ser propostos e refinados.
@@ -231,8 +233,10 @@ O usuário autentica-se com sua senha pessoal, instala o Maxhub como PWA usando 
 
 | Data | Atualização |
 |---|---|
-| 25/11/2026 | Criada estrutura inicial para Maxhub com os fatos já compartilhados; seções pendentes permanecem explicitamente em aberto. |
+| 25/11/2026 | Criada estrutura inicial para MaxHub com os fatos já compartilhados; seções pendentes permanecem explicitamente em aberto. |
 | 25/11/2026 | Adicionados grupos e propriedades de tarefas, organização temporal, Hoje, calendário, notas Markdown por grupo/tarefa, autenticação por senha, sincronização com Blob, tema claro azul e requisitos PWA/mobile. Registrada a orientação visual das capturas anexadas. |
 | 25/11/2026 | Confirmado uso individual com senha; domingo como início da semana e fuso de Brasília; tarefas sem prazo ficam em Hoje e tarefas vencidas são atrasadas no grupo original; adicionados subtarefas, status, arquivamento e Lixeira com retenção de 30 dias; múltiplas notas e minimização de conflitos; Chrome em Android/Linux/Windows; fontes Quicksand e Inter. |
 | 25/11/2026 | Registrado o estado do MVP e suas limitações verificadas; lint, typecheck e build passaram neste checkout. Blob remoto segue pendente de configuração e teste. |
 | 25/11/2026 | Separada a aba Tarefas (períodos temporais e Atrasadas) da aba Calendário, agora mensal, com navegação, seleção de dia e lista de prazos por dia/mês; tarefas sem prazo não viram eventos. |
+| 25/11/2026 | Confirmado por teste isolado que o SDK consegue criar, ler e excluir um Blob privado com a configuração local atual; o snapshot do workspace não foi acessado e a sincronização da aplicação segue sem validação remota. |
+| 25/11/2026 | Corrigido o tratamento de `get()` privado retornando `null` como workspace vazio em modo Blob; lint, typecheck e build passaram, e `GET /api/data` respondeu HTTP 200 com `storageMode: blob`. Nenhum `PUT` foi realizado e tarefas/notas não foram examinadas. |
