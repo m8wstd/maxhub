@@ -26,6 +26,16 @@ export function emptyWorkspace(): Workspace {
     ],
     tasks: [],
     notes: [],
+    pages: [{
+      id: "notebook-root",
+      name: "/",
+      icon: "📓",
+      parentId: null,
+      body: "",
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    }],
   };
 }
 

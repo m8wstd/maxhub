@@ -47,6 +47,10 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+html {
+  color-scheme: light;
+}
+
 :root {
   --background: #f7f9fb;
   --foreground: #25313b;

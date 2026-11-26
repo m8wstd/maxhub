@@ -43,8 +43,20 @@ export type Note = {
   deletedAt: string | null;
 };
 
+export type NotebookPage = {
+  id: string;
+  name: string;
+  icon: string;
+  parentId: string | null;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+};
+
 export type Workspace = {
   groups: TaskGroup[];
   tasks: Task[];
   notes: Note[];
+  pages: NotebookPage[];
 };

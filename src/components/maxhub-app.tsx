@@ -7,6 +7,7 @@ import {
   ArrowUp,
   ArrowDown,
   CalendarDays,
+  BookOpen,
   ChevronLeft,
   ChevronRight,
   Check,
@@ -22,7 +23,9 @@ import {
   Monitor,
   Moon,
   MoreHorizontal,
+  Pencil,
   Plus,
+  RefreshCw,
   Search,
   Settings,
   Settings2,
@@ -31,24 +34,41 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent } from "react";
 import { MarkdownPreview } from "@/components/markdown-preview";
-import { canKeepaliveWorkspaceSave, workspaceSaveDelay } from "@/lib/autosave-policy.mjs";
-import type { Note, Priority, Task, TaskGroup, Workspace } from "@/lib/maxhub-types";
+import {
+  insertNotebookPageBlock,
+  parseNotebookContent,
+  serializeNotebookContent,
+  splitNotebookTextBlock,
+} from "@/lib/notebook-content.mjs";
+import type { NotebookContentBlock } from "@/lib/notebook-content.mjs";
+import { canStartWorkspaceSync, mergeWorkspaceSnapshots } from "@/lib/workspace-sync.mjs";
+import { syncWorkspaceRequest } from "@/lib/workspace-sync-request.mjs";
+import type { NotebookPage, Note, Priority, Task, TaskGroup, Workspace } from "@/lib/maxhub-types";
 import { bucketForDate, capitalize, dateFromOffset, formatDate, remainingWeekdays, todayInSaoPaulo, weekdayForDate } from "@/lib/task-date";
 
-type ViewMode = "today" | "tasks" | "calendar" | "notes" | "trash" | "archive" | "settings";
+type ViewMode = "today" | "tasks" | "calendar" | "notebook" | "trash" | "archive" | "settings";
 type ThemePreference = "system" | "light" | "dark";
 type Bucket = { id: string; label: string; date?: string };
 
 const COLORS = ["#47b8ec", "#f0a36d", "#8e85e8", "#75b88b", "#e77e93", "#e4bd5c"];
 const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 const THEME_STORAGE_KEY = "maxhub-theme";
+const NOTEBOOK_ROOT_ID = "notebook-root";
 const PRIORITIES: { value: Priority; label: string }[] = [
   { value: "low", label: "Baixa" },
   { value: "normal", label: "Normal" },
   { value: "high", label: "Alta" },
 ];
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+function matchesNotebookPageCommand(text: string) {
+  const query = text.trim().toLocaleLowerCase("pt-BR");
+  return query.startsWith("/") && ["/page", "/pagina", "/página"].some((command) =>
+    command.startsWith(query) || query.startsWith(`${command} `)
+  );
+}
 
 function uid() {
   return crypto.randomUUID();
@@ -121,33 +141,15 @@ function liveItems<T extends { deletedAt: string | null }>(items: T[], nowMs: nu
   return items.filter((item) => !item.deletedAt || Date.parse(item.deletedAt) > cutoff);
 }
 
-function mergeWorkspace(local: Workspace, remote: Workspace): Workspace {
-  function mergeById<T extends { id: string; updatedAt: string }>(left: T[], right: T[]) {
-    const items = new Map<string, T>();
-    for (const item of [...right, ...left]) {
-      const current = items.get(item.id);
-      if (!current || item.updatedAt >= current.updatedAt) items.set(item.id, item);
-    }
-    return [...items.values()];
-  }
-  const merged = {
-    groups: mergeById(local.groups, remote.groups),
-    tasks: mergeById(local.tasks, remote.tasks),
-    notes: mergeById(local.notes, remote.notes),
-  };
-  const sameItems = <T extends { id: string }>(left: T[], right: T[]) => {
-    if (left.length !== right.length) return false;
-    const rightItems = new Set(right);
-    return left.every((item) => rightItems.has(item));
-  };
-  return sameItems(local.groups, merged.groups) &&
-    sameItems(local.tasks, merged.tasks) &&
-    sameItems(local.notes, merged.notes)
-    ? local
-    : merged;
-}
-
-function MarkdownEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+function MarkdownEditor({
+  value,
+  onChange,
+  ariaLabel = "Conteúdo Markdown",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  ariaLabel?: string;
+}) {
   const [preview, setPreview] = useState(false);
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-card">
@@ -161,6 +163,7 @@ function MarkdownEditor({ value, onChange }: { value: string; onChange: (value: 
         <div className="min-h-32 p-3"><MarkdownPreview source={value} /></div>
       ) : (
         <textarea
+          aria-label={ariaLabel}
           className="min-h-32 w-full resize-y border-0 bg-transparent p-3 text-sm leading-6 outline-none"
           onChange={(event) => onChange(event.target.value)}
           placeholder={"Escreva em Markdown…\n\nUse ## para títulos, - para listas e **negrito**."}
@@ -215,52 +218,52 @@ export function MaxhubApp() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [syncStatus, setSyncStatus] = useState<"saved" | "syncing" | "offline">("saved");
+  const [syncStatus, setSyncStatus] = useState<"saved" | "pending" | "syncing" | "error" | "conflict">("saved");
   const [storageMode, setStorageMode] = useState<"blob" | "local-dev">("blob");
   const [mode, setMode] = useState<ViewMode>("today");
   const [groupId, setGroupId] = useState<string | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
+  const [selectedPageId, setSelectedPageId] = useState(NOTEBOOK_ROOT_ID);
+  const [isEditingNotebookPage, setIsEditingNotebookPage] = useState(false);
   const [calendarMonthOverride, setCalendarMonthOverride] = useState<string | null>(null);
   const [calendarSelectedDay, setCalendarSelectedDay] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [newGroupName, setNewGroupName] = useState("");
   const [showNewGroup, setShowNewGroup] = useState(false);
-  const [newNoteTitle, setNewNoteTitle] = useState("");
-  const [showNewNote, setShowNewNote] = useState(false);
   const [subtaskDraft, setSubtaskDraft] = useState("");
   const [mobileDetail, setMobileDetail] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [today, setToday] = useState("2000-01-01");
   const [nowMs, setNowMs] = useState(0);
-  const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
-    if (typeof window === "undefined") return "system";
-    try {
-      const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
-      return stored === "system" || stored === "light" || stored === "dark" ? stored : "system";
-    } catch {
-      return "system";
-    }
-  });
+  const [notebookBlockMenuIndex, setNotebookBlockMenuIndex] = useState<number | null>(null);
+  const [themePreference, setThemePreference] = useState<ThemePreference>("system");
+  const themePreferenceInitializedRef = useRef(false);
   const versionRef = useRef<string | null>(null);
   const stateRef = useRef<Workspace | null>(null);
   const savingRef = useRef(false);
-  const hydratedRef = useRef(false);
-  const saveImmediatelyRef = useRef(false);
+  const dirtyRef = useRef(false);
+  const initialWorkspaceRequestRef = useRef<ReturnType<typeof requestWorkspace> | null>(null);
 
   useLayoutEffect(() => {
     const root = document.documentElement;
     const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+    let preference = themePreference;
+    if (!themePreferenceInitializedRef.current) {
+      themePreferenceInitializedRef.current = true;
+      const initialPreference = root.dataset.themePreference;
+      if (initialPreference === "system" || initialPreference === "light" || initialPreference === "dark") {
+        preference = initialPreference;
+      }
+    }
     const applyTheme = () => {
-      const resolvedTheme = themePreference === "system"
+      const resolvedTheme = preference === "system"
         ? systemTheme.matches ? "dark" : "light"
-        : themePreference;
+        : preference;
       root.dataset.theme = resolvedTheme;
-      root.dataset.themePreference = themePreference;
-      root.style.colorScheme = resolvedTheme;
+      root.dataset.themePreference = preference;
     };
     const handleSystemThemeChange = () => {
-      if (themePreference === "system") applyTheme();
+      if (preference === "system") applyTheme();
     };
 
     applyTheme();
@@ -275,7 +278,6 @@ export function MaxhubApp() {
       : preference;
     document.documentElement.dataset.theme = resolvedTheme;
     document.documentElement.dataset.themePreference = preference;
-    document.documentElement.style.colorScheme = resolvedTheme;
     try {
       window.localStorage.setItem(THEME_STORAGE_KEY, preference);
     } catch {
@@ -285,8 +287,11 @@ export function MaxhubApp() {
 
   const acceptSnapshot = useCallback((data: { workspace: Workspace; version: string | null; storageMode: "blob" | "local-dev" }) => {
     versionRef.current = data.version;
+    dirtyRef.current = false;
     setStorageMode(data.storageMode);
-    setWorkspace((current) => current ? mergeWorkspace(current, data.workspace) : data.workspace);
+    setSyncStatus("saved");
+    setError("");
+    setWorkspace((current) => current ? mergeWorkspaceSnapshots(current, data.workspace) : data.workspace);
   }, []);
 
   const requestWorkspace = useCallback(async () => {
@@ -313,7 +318,6 @@ export function MaxhubApp() {
       setError(message);
       return message;
     } finally {
-      hydratedRef.current = true;
       setLoading(false);
     }
   }, [acceptSnapshot, requestWorkspace]);
@@ -325,7 +329,8 @@ export function MaxhubApp() {
       setNowMs(Date.now());
     };
     const todayTimeout = window.setTimeout(refreshClock, 0);
-    requestWorkspace()
+    initialWorkspaceRequestRef.current ??= requestWorkspace();
+    initialWorkspaceRequestRef.current
       .then((data) => {
         if (active && data) acceptSnapshot(data);
       })
@@ -334,76 +339,19 @@ export function MaxhubApp() {
       })
       .finally(() => {
         if (active) {
-          hydratedRef.current = true;
           setLoading(false);
         }
       });
     const interval = window.setInterval(refreshClock, 60_000);
-    const refresh = () => {
-      if (document.visibilityState === "visible" && stateRef.current) void loadWorkspace();
-    };
-    window.addEventListener("focus", refresh);
     return () => {
       active = false;
       window.clearTimeout(todayTimeout);
       window.clearInterval(interval);
-      window.removeEventListener("focus", refresh);
     };
-  }, [acceptSnapshot, loadWorkspace, requestWorkspace]);
+  }, [acceptSnapshot, requestWorkspace]);
 
   useLayoutEffect(() => {
     stateRef.current = workspace;
-  }, [workspace]);
-
-  useEffect(() => {
-    if (!workspace || !hydratedRef.current || savingRef.current) return;
-    const delay = workspaceSaveDelay(saveImmediatelyRef.current);
-    const timer = window.setTimeout(async () => {
-      saveImmediatelyRef.current = false;
-      let retryAfterConflict = false;
-      savingRef.current = true;
-      setSyncStatus("syncing");
-      try {
-        const body = JSON.stringify({ workspace, version: versionRef.current });
-        const response = await fetch("/api/data", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body,
-          ...(canKeepaliveWorkspaceSave(body) ? { keepalive: true } : {}),
-        });
-        if (response.status === 401) {
-          setWorkspace(null);
-          return;
-        }
-        if (response.status === 409) {
-          retryAfterConflict = true;
-          const latestResponse = await fetch("/api/data", { cache: "no-store" });
-          if (!latestResponse.ok) throw new Error("Conflito ao sincronizar. Tente novamente.");
-          const latest = await latestResponse.json();
-          versionRef.current = latest.version;
-          setStorageMode(latest.storageMode);
-          const current = stateRef.current;
-          if (current) setWorkspace(mergeWorkspace(current, latest.workspace));
-          return;
-        }
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error ?? "Falha na sincronização.");
-        versionRef.current = result.version;
-        setStorageMode(result.storageMode);
-        setSyncStatus("saved");
-        setError("");
-      } catch (caught) {
-        setSyncStatus("offline");
-        setError(caught instanceof Error ? caught.message : "Falha na sincronização.");
-      } finally {
-        savingRef.current = false;
-        const current = stateRef.current;
-        if (current && (retryAfterConflict || current !== workspace)) {
-          setWorkspace((latest) => latest ? { ...latest } : latest);
-        }
-      }
-    }, delay);
-    return () => window.clearTimeout(timer);
   }, [workspace]);
 
   const activeGroups = useMemo(() => workspace?.groups
@@ -414,13 +362,62 @@ export function MaxhubApp() {
   const calendarMonth = calendarMonthOverride ?? today.slice(0, 7);
   const calendarDates = datesInMonth(calendarMonth);
   const selectedTask = activeTasks.find((task) => task.id === selectedTaskId) ?? null;
-  const selectedNote = workspace?.notes.find((note) => note.id === selectedNoteId && !note.deletedAt) ?? null;
+  const notebookPages = workspace?.pages.filter((page) => !page.deletedAt) ?? [];
+  const selectedPage = notebookPages.find((page) => page.id === selectedPageId) ??
+    notebookPages.find((page) => page.id === NOTEBOOK_ROOT_ID) ?? null;
   const selectedGroup = activeGroups.find((group) => group.id === groupId) ?? null;
   const groupTasks = (task: Task) => groupId === null || task.groupId === groupId;
   const taskGroup = (task: Task) => activeGroups.find((group) => group.id === task.groupId);
 
   const updateWorkspace = (updater: (state: Workspace) => Workspace) => {
+    dirtyRef.current = true;
+    setSyncStatus("pending");
     setWorkspace((current) => current ? updater(current) : current);
+  };
+
+  const syncWorkspace = async () => {
+    const snapshot = stateRef.current;
+    if (!snapshot || savingRef.current || !canStartWorkspaceSync(syncStatus)) return;
+    const hasLocalChanges = dirtyRef.current;
+    savingRef.current = true;
+    setSyncStatus("syncing");
+    setError("");
+    try {
+      const result = await syncWorkspaceRequest({
+        workspace: snapshot,
+        version: versionRef.current,
+        hasLocalChanges,
+      });
+      if (result.status === "unauthorized") {
+        setWorkspace(null);
+        dirtyRef.current = false;
+        setError("A sessão expirou. Entre novamente.");
+        setSyncStatus("error");
+        return;
+      }
+      if (result.status === "conflict") {
+        versionRef.current = result.version;
+        setStorageMode(result.storageMode);
+        setWorkspace((current) => current ? mergeWorkspaceSnapshots(current, result.workspace) : current);
+        setSyncStatus("conflict");
+        setError("A versão remota mudou. Suas alterações foram mantidas e mescladas; toque em SYNC novamente para gravar a mesclagem.");
+        return;
+      }
+      versionRef.current = result.version;
+      setStorageMode(result.storageMode);
+      if (result.status === "pulled") {
+        setWorkspace((current) => current ? mergeWorkspaceSnapshots(current, result.workspace) : current);
+        setSyncStatus(dirtyRef.current ? "pending" : "saved");
+        return;
+      }
+      dirtyRef.current = stateRef.current !== snapshot;
+      setSyncStatus(dirtyRef.current ? "pending" : "saved");
+    } catch (caught) {
+      setSyncStatus("error");
+      setError(caught instanceof Error ? caught.message : "Falha na sincronização.");
+    } finally {
+      savingRef.current = false;
+    }
   };
 
   const updateTask = (id: string, patch: Partial<Task>) => {
@@ -466,6 +463,7 @@ export function MaxhubApp() {
   const logout = async () => {
     await fetch("/api/auth/login", { method: "DELETE" });
     setWorkspace(null);
+    dirtyRef.current = false;
     setSelectedTaskId(null);
   };
 
@@ -504,8 +502,193 @@ export function MaxhubApp() {
   const trashedTasks = liveItems(workspace?.tasks.filter((task) => task.deletedAt) ?? [], nowMs);
   const trashedGroups = liveItems(workspace?.groups.filter((group) => group.deletedAt) ?? [], nowMs);
   const trashedNotes = liveItems(workspace?.notes.filter((note) => note.deletedAt) ?? [], nowMs);
-  const looseNotes = workspace?.notes.filter((note) => !note.deletedAt && !note.taskId && (groupId === null || note.groupId === groupId)) ?? [];
   const taskNotes = selectedTask ? workspace?.notes.filter((note) => !note.deletedAt && note.taskId === selectedTask.id) ?? [] : [];
+
+  const notebookChildren = (parentId: string) => notebookPages
+    .filter((page) => page.parentId === parentId)
+    .sort((left, right) => left.name.localeCompare(right.name, "pt-BR"));
+  const notebookDescendants = (pageId: string) => {
+    const descendants = new Set<string>();
+    const pending = [pageId];
+    while (pending.length) {
+      const currentId = pending.pop()!;
+      for (const child of notebookChildren(currentId)) {
+        if (!descendants.has(child.id)) {
+          descendants.add(child.id);
+          pending.push(child.id);
+        }
+      }
+    }
+    return descendants;
+  };
+  const notebookBlocks = selectedPage ? parseNotebookContent(selectedPage.body) : [];
+  const linkedNotebookPageIds = new Set(notebookBlocks
+    .filter((block) => block.type === "page" && notebookPages.some((page) => page.id === block.pageId && page.parentId === selectedPage?.id))
+    .map((block) => block.type === "page" ? block.pageId : ""));
+  const unlinkedNotebookChildren = selectedPage
+    ? notebookChildren(selectedPage.id).filter((page) => !linkedNotebookPageIds.has(page.id))
+    : [];
+  const notebookPath = (page: NotebookPage) => {
+    const ancestors = [page];
+    let parentId = page.parentId;
+    while (parentId) {
+      const parent = notebookPages.find((item) => item.id === parentId);
+      if (!parent) break;
+      ancestors.unshift(parent);
+      parentId = parent.parentId;
+    }
+    return ancestors;
+  };
+
+  const updateNotebookPage = (id: string, patch: Partial<NotebookPage>) => {
+    updateWorkspace((state) => ({
+      ...state,
+      pages: state.pages.map((page) => page.id === id ? { ...page, ...patch, updatedAt: now() } : page),
+    }));
+  };
+
+  const selectNotebookPage = (id: string) => {
+    setSelectedPageId(id);
+    setIsEditingNotebookPage(false);
+    setNotebookBlockMenuIndex(null);
+  };
+
+  const focusNotebookBlock = (index: number, cursor?: number) => {
+    requestAnimationFrame(() => {
+      const input = document.querySelector<HTMLTextAreaElement>(`[data-notebook-block-index="${index}"]`);
+      input?.focus();
+      if (cursor !== undefined) input?.setSelectionRange(cursor, cursor);
+    });
+  };
+
+  const saveNotebookBlocks = (blocks: NotebookContentBlock[]) => {
+    if (!selectedPage) return;
+    updateNotebookPage(selectedPage.id, { body: serializeNotebookContent(blocks) });
+  };
+
+  const addNotebookTextBlock = (afterIndex: number) => {
+    if (!selectedPage) return;
+    const blocks = parseNotebookContent(selectedPage.body);
+    blocks.splice(afterIndex + 1, 0, { type: "text", text: "" });
+    saveNotebookBlocks(blocks);
+    setNotebookBlockMenuIndex(null);
+    focusNotebookBlock(afterIndex + 1);
+  };
+
+  const addNotebookPage = (index: number, replaceCurrent: boolean) => {
+    if (!selectedPage) return;
+    const stamp = now();
+    const page: NotebookPage = {
+      id: uid(),
+      name: "Nova página",
+      icon: "📄",
+      parentId: selectedPage.id,
+      body: "",
+      createdAt: stamp,
+      updatedAt: stamp,
+      deletedAt: null,
+    };
+    const blocks = parseNotebookContent(selectedPage.body);
+    const body = serializeNotebookContent(insertNotebookPageBlock(blocks, index, page.id, replaceCurrent));
+    updateWorkspace((current) => ({
+      ...current,
+      pages: [
+        ...current.pages.map((item) => item.id === selectedPage.id ? { ...item, body, updatedAt: stamp } : item),
+        page,
+      ],
+    }));
+    setSelectedPageId(page.id);
+    setIsEditingNotebookPage(false);
+    setNotebookBlockMenuIndex(null);
+    focusNotebookBlock(0);
+  };
+
+  const updateNotebookBlock = (index: number, text: string) => {
+    const blocks = parseNotebookContent(selectedPage?.body ?? "");
+    const newLines = text.split("\n").map((line) => ({ type: "text" as const, text: line }));
+    blocks.splice(index, 1, ...newLines);
+    saveNotebookBlocks(blocks);
+    if (newLines.length > 1) focusNotebookBlock(index + newLines.length - 1, newLines.at(-1)?.text.length);
+  };
+
+  const handleNotebookBlockKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, index: number, text: string) => {
+    const input = event.currentTarget;
+    const blocks = parseNotebookContent(selectedPage?.body ?? "");
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (matchesNotebookPageCommand(text)) {
+        addNotebookPage(index, true);
+        return;
+      }
+      saveNotebookBlocks(splitNotebookTextBlock(blocks, index, input.selectionStart, input.selectionEnd));
+      focusNotebookBlock(index + 1);
+      return;
+    }
+
+    if (event.key === "Backspace" && input.selectionStart === 0 && input.selectionEnd === 0 && text === "" && index > 0) {
+      event.preventDefault();
+      blocks.splice(index, 1);
+      saveNotebookBlocks(blocks);
+      const previousTextIndex = blocks.slice(0, index).map((block) => block.type === "text").lastIndexOf(true);
+      if (previousTextIndex >= 0) focusNotebookBlock(previousTextIndex);
+      return;
+    }
+
+    if (event.key === "ArrowUp" && input.selectionStart === 0 && input.selectionEnd === 0) {
+      const previousTextIndex = blocks.slice(0, index).map((block) => block.type === "text").lastIndexOf(true);
+      if (previousTextIndex >= 0) {
+        event.preventDefault();
+        focusNotebookBlock(previousTextIndex);
+      }
+      return;
+    }
+
+    if (event.key === "ArrowDown" && input.selectionStart === text.length && input.selectionEnd === text.length) {
+      const nextTextIndex = blocks.findIndex((block, blockIndex) => blockIndex > index && block.type === "text");
+      if (nextTextIndex >= 0) {
+        event.preventDefault();
+        focusNotebookBlock(nextTextIndex);
+      }
+    }
+  };
+
+  const deleteNotebookPage = () => {
+    if (!selectedPage || selectedPage.id === NOTEBOOK_ROOT_ID) return;
+    const descendants = notebookDescendants(selectedPage.id);
+    if (!window.confirm(`Excluir “${selectedPage.name}” e ${descendants.size} ${descendants.size === 1 ? "subpágina" : "subpáginas"}?`)) return;
+    const deletedAt = now();
+    updateWorkspace((current) => ({
+      ...current,
+      pages: current.pages.map((page) => {
+        if (page.id === selectedPage.id || descendants.has(page.id)) {
+          return { ...page, deletedAt, updatedAt: deletedAt };
+        }
+        if (page.id === selectedPage.parentId) {
+          const blocks = parseNotebookContent(page.body).filter((block) => block.type !== "page" || block.pageId !== selectedPage.id);
+          return { ...page, body: serializeNotebookContent(blocks), updatedAt: deletedAt };
+        }
+        return page;
+      }),
+    }));
+    setSelectedPageId(selectedPage.parentId ?? NOTEBOOK_ROOT_ID);
+    setIsEditingNotebookPage(false);
+  };
+
+  const renderNotebookTree = (page: NotebookPage, depth = 0): React.ReactNode => (
+    <div className="notebook-tree-branch" key={page.id}>
+      <button
+        aria-current={selectedPage?.id === page.id ? "page" : undefined}
+        className={`notebook-tree-page${selectedPage?.id === page.id ? " selected" : ""}`}
+        onClick={() => selectNotebookPage(page.id)}
+        style={{ paddingLeft: `${10 + depth * 14}px` }}
+        type="button"
+      >
+        <span aria-hidden="true">{page.icon}</span>
+        <span>{page.id === NOTEBOOK_ROOT_ID ? "/" : page.name}</span>
+      </button>
+      {notebookChildren(page.id).map((child) => renderNotebookTree(child, depth + 1))}
+    </div>
+  );
 
   const addTask = () => {
     const targetGroup = groupId ?? activeGroups.find((group) => !group.archived)?.id;
@@ -514,8 +697,7 @@ export function MaxhubApp() {
       return;
     }
     const task = newTask(targetGroup);
-    saveImmediatelyRef.current = true;
-    setWorkspace((current) => current ? { ...current, tasks: [...current.tasks, task] } : current);
+    updateWorkspace((current) => ({ ...current, tasks: [...current.tasks, task] }));
     setSelectedTaskId(task.id);
     setMobileDetail(true);
   };
@@ -525,7 +707,7 @@ export function MaxhubApp() {
     const name = newGroupName.trim();
     if (!name) return;
     const group = newGroup(name, activeGroups.length);
-    setWorkspace((current) => current ? { ...current, groups: [...current.groups, group] } : current);
+    updateWorkspace((current) => ({ ...current, groups: [...current.groups, group] }));
     setGroupId(group.id);
     setMode("tasks");
     setNewGroupName("");
@@ -575,20 +757,6 @@ export function MaxhubApp() {
     }));
   };
 
-  const addLooseNote = (event: React.FormEvent) => {
-    event.preventDefault();
-    const title = newNoteTitle.trim();
-    if (!title || !workspace) return;
-    const stamp = now();
-    const note: Note = {
-      id: uid(), title, body: "", groupId: groupId, taskId: null, createdAt: stamp, updatedAt: stamp, deletedAt: null,
-    };
-    setWorkspace({ ...workspace, notes: [...workspace.notes, note] });
-    setSelectedNoteId(note.id);
-    setNewNoteTitle("");
-    setShowNewNote(false);
-  };
-
   const createTaskNote = () => {
     if (!selectedTask || !workspace) return;
     const stamp = now();
@@ -596,8 +764,7 @@ export function MaxhubApp() {
       id: uid(), title: "Nova nota", body: "", groupId: selectedTask.groupId, taskId: selectedTask.id,
       createdAt: stamp, updatedAt: stamp, deletedAt: null,
     };
-    setWorkspace({ ...workspace, notes: [...workspace.notes, note] });
-    setSelectedNoteId(note.id);
+    updateWorkspace((current) => ({ ...current, notes: [...current.notes, note] }));
   };
 
   if (loading && !workspace) {
@@ -611,8 +778,8 @@ export function MaxhubApp() {
       ? "Tarefas"
       : mode === "calendar"
         ? "Calendário"
-        : mode === "notes"
-          ? "Notas"
+        : mode === "notebook"
+          ? "Caderno"
           : mode === "trash"
             ? "Lixeira"
             : mode === "archive"
@@ -634,10 +801,48 @@ export function MaxhubApp() {
     }));
   };
 
+  const renderNotebookBlockMenu = (index: number) => (
+    <div className="notebook-block-menu" role="menu">
+      <button onClick={() => addNotebookTextBlock(index)} role="menuitem" type="button">
+        <span>Texto</span><small>Nova linha de texto</small>
+      </button>
+      <button onClick={() => addNotebookPage(index, false)} role="menuitem" type="button">
+        <span>Página</span><small>Cria uma subpágina aqui</small>
+      </button>
+    </div>
+  );
+
+  const renderNotebookPageBlock = (page: NotebookPage, index: number, editable: boolean) => (
+    <div className={`notebook-block-row notebook-page-block-row${editable ? " editable" : ""}`} key={`page-${page.id}-${index}`}>
+      {editable && (
+        <>
+          <button
+            aria-expanded={notebookBlockMenuIndex === index}
+            aria-label={`Adicionar bloco após ${page.name}`}
+            className="notebook-block-add"
+            onClick={() => setNotebookBlockMenuIndex(notebookBlockMenuIndex === index ? null : index)}
+            type="button"
+          >
+            <Plus size={16} />
+          </button>
+          {notebookBlockMenuIndex === index && renderNotebookBlockMenu(index)}
+        </>
+      )}
+      <button className="notebook-page-block" onClick={() => selectNotebookPage(page.id)} type="button">
+        <span aria-hidden="true">{page.icon}</span>
+        <span>{page.name}</span>
+        <ChevronRight aria-hidden="true" size={15} />
+      </button>
+    </div>
+  );
+
   const selectedNav = (view: ViewMode) => {
+    if (view === "settings") {
+      const stored = document.documentElement.dataset.themePreference;
+      if (stored === "system" || stored === "light" || stored === "dark") setThemePreference(stored);
+    }
     setMode(view);
     setSelectedTaskId(null);
-    setSelectedNoteId(null);
     setMobileDetail(false);
     setSidebarOpen(false);
   };
@@ -657,7 +862,7 @@ export function MaxhubApp() {
           <div className="sidebar-heading"><span>PLANEJAMENTO</span></div>
           <button className={`nav-item ${mode === "tasks" && groupId === null ? "active" : ""}`} onClick={() => { setGroupId(null); selectedNav("tasks"); }}><ListTodo size={17} /> Tarefas</button>
           <button className={`nav-item ${mode === "calendar" ? "active" : ""}`} onClick={() => selectedNav("calendar")}><CalendarDays size={17} /> Calendário</button>
-          <button className={`nav-item ${mode === "notes" ? "active" : ""}`} onClick={() => selectedNav("notes")}><FileText size={17} /> Notas</button>
+          <button className={`nav-item ${mode === "notebook" ? "active" : ""}`} onClick={() => selectedNav("notebook")}><BookOpen size={17} /> Caderno</button>
         </div>
         <div className="sidebar-section group-section">
           <div className="sidebar-heading">
@@ -706,8 +911,6 @@ export function MaxhubApp() {
         <button className={`nav-item ${mode === "trash" ? "active" : ""}`} onClick={() => selectedNav("trash")}><Trash2 size={17} /> Lixeira <span className="nav-count">{trashedTasks.length + trashedGroups.length + trashedNotes.length}</span></button>
         <button className={`nav-item ${mode === "settings" ? "active" : ""}`} onClick={() => selectedNav("settings")}><Settings size={17} /> Configurações</button>
         <div className="sidebar-footer">
-          <div className={`sync-dot ${syncStatus}`} />
-          <span>{syncStatus === "syncing" ? "Sincronizando" : syncStatus === "offline" ? "Sem sincronização" : storageMode === "local-dev" ? "Teste local" : "Tudo salvo"}</span>
           <button className="icon-button ml-auto" aria-label="Sair" title="Sair" onClick={() => void logout()}><LogOut size={16} /></button>
         </div>
       </aside>
@@ -718,6 +921,16 @@ export function MaxhubApp() {
           <button className="icon-button mobile-menu" aria-label="Abrir menu" onClick={() => setSidebarOpen(true)}><Menu size={19} /></button>
           <div className="crumb"><span>{groupId ? selectedGroup?.name ?? "Grupo" : "Seu espaço"}</span><span className="crumb-slash">/</span><strong>{headerTitle}</strong></div>
           <div className="topbar-actions">
+            <div className={`sync-control ${syncStatus}`}>
+              <button className="primary-button sync-button" disabled={syncStatus === "syncing"} onClick={() => void syncWorkspace()}>
+                <RefreshCw size={14} className={syncStatus === "syncing" ? "sync-spinning" : ""} />
+                SYNC
+              </button>
+              <span role="status" aria-live="polite">{syncStatus === "saved" ? storageMode === "local-dev" ? "Teste local" : "Sincronizado" :
+                syncStatus === "pending" ? "Pendente" :
+                  syncStatus === "syncing" ? "Enviando…" :
+                    syncStatus === "conflict" ? "Conflito" : "Erro"}</span>
+            </div>
             <label className="search-box">
               <Search size={16} />
               <input aria-label="Buscar tarefa" onChange={(event) => setSearch(event.target.value)} placeholder="Buscar" value={search} />
@@ -732,24 +945,24 @@ export function MaxhubApp() {
             Modo de teste local: os dados ficam neste worktree e não são sincronizados com a Vercel.
           </div>
         )}
-        <div className="view-content">
-          <div className="page-heading">
-            <div>
-              <p className="eyebrow">{mode === "settings" ? "PREFERÊNCIAS" : new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${today}T12:00:00Z`))}</p>
-              <h1>{mode === "tasks" && groupId ? selectedGroup?.name : headerTitle}</h1>
-              <p className="page-description">
-                {mode === "settings" ? "Personalize a aparência do seu espaço." :
-                  mode === "today" ? "Tarefas de hoje e sem prazo." :
-                  mode === "tasks" ? "Prazos de todas as tarefas organizados por período." :
-                    mode === "calendar" ? "Consulte os prazos no calendário mensal." :
-                      mode === "notes" ? "Ideias e referências organizadas por grupo." :
+        <div className={`view-content${mode === "notebook" ? " notebook-view-content" : ""}`}>
+          {mode !== "notebook" && (
+            <div className="page-heading">
+              <div>
+                <p className="eyebrow">{mode === "settings" ? "PREFERÊNCIAS" : new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${today}T12:00:00Z`))}</p>
+                <h1>{mode === "tasks" && groupId ? selectedGroup?.name : headerTitle}</h1>
+                <p className="page-description">
+                  {mode === "settings" ? "Personalize a aparência do seu espaço." :
+                    mode === "today" ? "Tarefas de hoje e sem prazo." :
+                    mode === "tasks" ? "Prazos de todas as tarefas organizados por período." :
+                      mode === "calendar" ? "Consulte os prazos no calendário mensal." :
                         mode === "trash" ? "Itens excluídos ficam disponíveis por 30 dias." :
                           "Tarefas e grupos guardados para consultar depois."}
-              </p>
+                </p>
+              </div>
+              {(mode === "today" || mode === "tasks") && <button className="primary-button" onClick={addTask}><Plus size={17} /> Nova tarefa</button>}
             </div>
-            {(mode === "today" || mode === "tasks") && <button className="primary-button" onClick={addTask}><Plus size={17} /> Nova tarefa</button>}
-            {mode === "notes" && <button className="primary-button" onClick={() => setShowNewNote(true)}><Plus size={17} /> Nova nota</button>}
-          </div>
+          )}
 
           {mode === "settings" && (
             <section className="settings-panel" aria-labelledby="appearance-heading">
@@ -923,34 +1136,131 @@ export function MaxhubApp() {
             </div>
           )}
 
-          {mode === "notes" && (
-            <div className="notes-workspace">
-              <div className="note-list">
-                <div className="note-list-head"><span>{groupId ? selectedGroup?.name : "Todas as notas"}</span><button className="icon-button" aria-label="Nova nota" onClick={() => setShowNewNote(true)}><Plus size={17} /></button></div>
-                {showNewNote && (
-                  <form className="note-create-form" onSubmit={addLooseNote}>
-                    <input autoFocus onChange={(event) => setNewNoteTitle(event.target.value)} placeholder="Título da nota" value={newNoteTitle} />
-                    <button className="text-button" type="submit">Criar</button>
-                  </form>
-                )}
-                {looseNotes.length ? looseNotes.map((note) => (
-                  <button className={`note-card ${selectedNoteId === note.id ? "selected" : ""}`} key={note.id} onClick={() => setSelectedNoteId(note.id)}>
-                    <strong>{note.title}</strong><span>{note.body.trim().split("\n")[0] || "Sem conteúdo"}</span>
-                    <small>{activeGroups.find((group) => group.id === note.groupId)?.name ?? "Geral"}</small>
-                  </button>
-                )) : !showNewNote && <div className="small-empty">Nenhuma nota neste grupo.</div>}
-              </div>
-              <div className="note-editor">
-                {selectedNote ? (
+          {mode === "notebook" && selectedPage && (
+            <div className="notebook-workspace">
+              <aside className="notebook-tree" aria-label="Páginas do Caderno">
+                <div className="notebook-tree-heading">
+                  <span>PÁGINAS</span>
+                </div>
+                {notebookPages.find((page) => page.id === NOTEBOOK_ROOT_ID) && renderNotebookTree(notebookPages.find((page) => page.id === NOTEBOOK_ROOT_ID)!)}
+              </aside>
+              <article className={`notebook-page${isEditingNotebookPage ? " is-editing" : ""}`}>
+                <nav className="notebook-breadcrumbs" aria-label="Caminho da página">
+                  {notebookPath(selectedPage).map((page, index) => (
+                    <span key={page.id}>
+                      {index > 0 && <span className="notebook-breadcrumb-separator">/</span>}
+                      <button onClick={() => selectNotebookPage(page.id)} type="button">
+                        {page.id === NOTEBOOK_ROOT_ID ? "/" : page.name}
+                      </button>
+                    </span>
+                  ))}
+                </nav>
+                {isEditingNotebookPage ? (
                   <>
-                    <div className="note-editor-head">
-                      <input className="note-title-input" onChange={(event) => updateNote(selectedNote.id, { title: event.target.value })} value={selectedNote.title} />
-                      <button className="icon-button" aria-label="Excluir nota" onClick={() => updateNote(selectedNote.id, { deletedAt: now() })}><Trash2 size={16} /></button>
+                    <div className="notebook-edit-heading">
+                      <span>Editar propriedades</span>
+                      <button className="secondary-button" onClick={() => setIsEditingNotebookPage(false)} type="button">Concluir</button>
                     </div>
-                    <MarkdownEditor onChange={(body) => updateNote(selectedNote.id, { body })} value={selectedNote.body} />
+                    <div className="notebook-page-fields">
+                      <label className="notebook-icon-field">
+                        <span>Ícone</span>
+                        <input
+                          aria-label="Ícone da página"
+                          maxLength={32}
+                          onChange={(event) => updateNotebookPage(selectedPage.id, { icon: event.target.value || "📄" })}
+                          value={selectedPage.icon}
+                        />
+                      </label>
+                      <label className="notebook-name-field">
+                        <span>Nome</span>
+                        <input
+                          aria-label="Nome da página"
+                          disabled={selectedPage.id === NOTEBOOK_ROOT_ID}
+                          onChange={(event) => updateNotebookPage(selectedPage.id, { name: event.target.value || "Sem título" })}
+                          value={selectedPage.id === NOTEBOOK_ROOT_ID ? "/" : selectedPage.name}
+                        />
+                      </label>
+                      <label className="notebook-parent-field">
+                        <span>Parente</span>
+                        <select
+                          aria-label="Página parente"
+                          disabled={selectedPage.id === NOTEBOOK_ROOT_ID}
+                          onChange={(event) => updateNotebookPage(selectedPage.id, { parentId: event.target.value })}
+                          value={selectedPage.parentId ?? NOTEBOOK_ROOT_ID}
+                        >
+                          <option value={NOTEBOOK_ROOT_ID}>/</option>
+                          {notebookPages
+                            .filter((page) => page.id !== selectedPage.id && !notebookDescendants(selectedPage.id).has(page.id))
+                            .sort((left, right) => left.name.localeCompare(right.name, "pt-BR"))
+                            .map((page) => (
+                              <option key={page.id} value={page.id}>{notebookPath(page).map((item) => item.name).join(" / ")}</option>
+                            ))}
+                        </select>
+                      </label>
+                    </div>
                   </>
-                ) : <div className="small-empty">Selecione uma nota ou crie uma nova.</div>}
-              </div>
+                ) : (
+                  <header className="notebook-page-view-heading">
+                    <div className="notebook-page-title">
+                      <span aria-hidden="true">{selectedPage.icon}</span>
+                      <h2>{selectedPage.name}</h2>
+                    </div>
+                    <div className="notebook-page-actions">
+                      {selectedPage.id !== NOTEBOOK_ROOT_ID && (
+                        <button className="icon-button notebook-delete-page" aria-label={`Excluir ${selectedPage.name} e suas subpáginas`} onClick={deleteNotebookPage} type="button">
+                          <Trash2 size={16} />
+                        </button>
+                      )}
+                      <button className="secondary-button notebook-edit-button" onClick={() => setIsEditingNotebookPage(true)} type="button">
+                        <Pencil size={14} /> Editar propriedades
+                      </button>
+                    </div>
+                  </header>
+                )}
+                <div className="notebook-block-editor" aria-label="Blocos de conteúdo da página">
+                  {notebookBlocks.map((block, index) => {
+                    if (block.type === "page") {
+                      const page = notebookPages.find((item) => item.id === block.pageId && item.parentId === selectedPage.id);
+                      return page ? renderNotebookPageBlock(page, index, true) : null;
+                    }
+                    const showPageCommand = matchesNotebookPageCommand(block.text);
+                    return (
+                      <div className="notebook-block-row" key={`text-${index}`}>
+                        <button
+                          aria-expanded={notebookBlockMenuIndex === index}
+                          aria-label={`Adicionar bloco após linha ${index + 1}`}
+                          className="notebook-block-add"
+                          onClick={() => setNotebookBlockMenuIndex(notebookBlockMenuIndex === index ? null : index)}
+                          type="button"
+                        >
+                          <Plus size={16} />
+                        </button>
+                        {notebookBlockMenuIndex === index && renderNotebookBlockMenu(index)}
+                        <textarea
+                          aria-label={`Linha ${index + 1}`}
+                          className="notebook-block-input"
+                          data-notebook-block-index={index}
+                          onChange={(event) => updateNotebookBlock(index, event.target.value)}
+                          onKeyDown={(event) => handleNotebookBlockKeyDown(event, index, block.text)}
+                          placeholder={index === 0 ? "Escreva ou digite / para inserir um bloco" : ""}
+                          rows={1}
+                          value={block.text}
+                        />
+                        {showPageCommand && (
+                          <div className="notebook-slash-menu" role="menu" aria-label="Comandos do Caderno">
+                            <button onClick={() => addNotebookPage(index, true)} role="menuitem" type="button">
+                              <span>📄 Página</span><small>Adicionar uma subpágina</small>
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {unlinkedNotebookChildren.map((page, index) =>
+                    renderNotebookPageBlock(page, notebookBlocks.length + index, false)
+                  )}
+                </div>
+              </article>
             </div>
           )}
 
@@ -1054,7 +1364,7 @@ export function MaxhubApp() {
                 {taskNotes.map((note) => (
                   <div className="task-note" key={note.id}>
                     <div className="task-note-head"><input aria-label="Título da nota" onChange={(event) => updateNote(note.id, { title: event.target.value })} value={note.title} /><button className="icon-button tiny" aria-label="Excluir nota" onClick={() => updateNote(note.id, { deletedAt: now() })}><X size={13} /></button></div>
-                    <MarkdownEditor onChange={(body) => updateNote(note.id, { body })} value={note.body} />
+                    <MarkdownEditor ariaLabel={`Conteúdo Markdown da nota ${note.title}`} onChange={(body) => updateNote(note.id, { body })} value={note.body} />
                   </div>
                 ))}
                 {!taskNotes.length && <p className="helper-text">Adicione notas em Markdown para guardar contexto.</p>}
@@ -1064,8 +1374,8 @@ export function MaxhubApp() {
               </div>
             </div>
           </>
-        ) : selectedNote && mode === "notes" ? (
-          <div className="detail-placeholder"><FileText size={25} /><p>A nota selecionada pode ser editada na área central.</p></div>
+        ) : mode === "notebook" ? (
+          <div className="detail-placeholder"><BookOpen size={25} /><h3>Caderno</h3><p>Suas páginas em Markdown ficam organizadas por páginas parentes e subpáginas.</p></div>
         ) : mode === "settings" ? (
           <div className="detail-placeholder"><Settings size={25} /><h3>Configurações</h3><p>As preferências de aparência ficam salvas neste dispositivo.</p></div>
         ) : (
@@ -1076,7 +1386,7 @@ export function MaxhubApp() {
         <button className={mode === "today" ? "active" : ""} onClick={() => { setGroupId(null); selectedNav("today"); }}><CheckCircle2 size={19} /><span>Hoje</span></button>
         <button className={mode === "tasks" ? "active" : ""} onClick={() => { setGroupId(null); selectedNav("tasks"); }}><ListTodo size={19} /><span>Tarefas</span></button>
         <button className={mode === "calendar" ? "active" : ""} onClick={() => selectedNav("calendar")}><CalendarDays size={19} /><span>Calendário</span></button>
-        <button className={mode === "notes" ? "active" : ""} onClick={() => selectedNav("notes")}><FileText size={19} /><span>Notas</span></button>
+        <button className={mode === "notebook" ? "active" : ""} onClick={() => selectedNav("notebook")}><BookOpen size={19} /><span>Caderno</span></button>
         <button onClick={() => setSidebarOpen(true)}><Menu size={19} /><span>Mais</span></button>
       </nav>
     </main>

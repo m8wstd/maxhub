@@ -23,21 +23,22 @@
 - **25/11/2026 — Blob privado:** teste isolado com o SDK criou, leu e removeu um objeto privado temporário com sucesso, usando as variáveis carregadas pelo Next de `.env.local`.
 - **25/11/2026 — Leitura via aplicação:** depois de tratar `get()` retornando `null` como workspace vazio, `GET /api/data` retornou HTTP 200 com `storageMode: blob`. O teste não examinou nem exibiu tarefas ou notas.
 - **25/11/2026 — Production:** o usuário confirmou que login e sincronização com Blob estão funcionando após configurar `MAXHUB_PASSWORD_HASH` no painel Vercel sem aspas nem barras invertidas. Nenhum valor secreto é registrado neste documento.
-- **25/11/2026 — Salvamento de tarefas no celular:** identificado um risco de perda antes da gravação: a criação dependia do debounce de 700 ms, que podia ser reiniciado/cancelado pelo refresh ao voltar ao app. Novas tarefas agora iniciam salvamento imediatamente, requisições pequenas usam `keepalive` e um refresh sem alterações não troca a referência do workspace. Testes focados, lint, typecheck e build passaram. A tarefa relatada como desaparecida não foi recuperada nem seus dados foram examinados.
+- **25/11/2026 — Sincronização manual e conflitos:** removidos os salvamentos automáticos e as leituras ao recuperar foco. O app carrega o workspace ao abrir/entrar; o botão único `SYNC` busca atualizações remotas quando não há edições locais e grava o snapshot quando há alterações pendentes. Foi confirmado no código que HTTP 409 representa rejeição por conflito de ETag/`ifMatch`, não uma gravação bem-sucedida. Em `409`, mantém as alterações locais, carrega a versão remota para mesclagem por registro e aguarda outro clique para gravar a mesclagem. Teste simulado cobre o ciclo 409 → leitura da versão atual → nova tentativa com ETag atual; não houve teste contra Blob real/Production.
+- **25/11/2026 — Caderno hierárquico:** a navegação de Notas foi substituída por Caderno, com raiz `/`, páginas e subpáginas editáveis por nome, ícone, parente e conteúdo Markdown. Notas soltas legadas são migradas para páginas; notas contextuais continuam dentro das tarefas. Páginas participam da validação e da mesclagem de sincronização.
 
 ## 2. Visão geral da arquitetura
 
-O MaxHub será um hub pessoal de produtividade, instalável em celular e computador. A experiência deve facilitar a organização de tarefas e notas por grupos, com vistas temporais e calendário. O design de referência enviado pelo usuário inspira-se no Tappsk: interface clara, navegação inferior, listas de tarefas e um painel de detalhes ao lado no desktop. Essa referência visual orienta o produto, sem exigir uma cópia exata.
+O MaxHub será um hub pessoal de produtividade, instalável em celular e computador. A experiência deve facilitar a organização de tarefas, notas contextuais e páginas do Caderno, com vistas temporais e calendário. O design de referência enviado pelo usuário inspira-se no Tappsk: interface clara, navegação inferior, listas de tarefas e um painel de detalhes ao lado no desktop. Essa referência visual orienta o produto, sem exigir uma cópia exata.
 
 ### Módulos previstos
 
 - **Tarefas:** grupos como Faculdade, projetos individuais e Geral; campos editáveis de prazo, prioridade, cor e grupo; tarefas podem ter subtarefas, status e arquivamento.
 - **Tarefas e Hoje:** a aba Tarefas organiza Hoje, Amanhã, cada dia restante da semana atual, Depois (semana seguinte em diante) e Atrasadas. Domingo é o primeiro dia da semana. Tarefas sem prazo permanecem em Hoje; tarefas vencidas continuam no grupo original.
 - **Calendário:** grade mensal real com navegação entre meses, semana de domingo a sábado e seleção de dia. Dias com tarefas que têm prazo são marcados; selecionar um dia filtra a lista de prazos, e sem seleção a lista mostra os prazos do mês. Tarefas sem prazo não aparecem como eventos.
-- **Notas sincronizadas:** múltiplas notas por grupo e por tarefa; notas de tarefa também servem de etiquetas/contexto, sem criar um sistema separado de etiquetas. Editar em Markdown com visualização renderizada semelhante ao Notion.
+- **Caderno:** página raiz `/` e páginas Markdown aninháveis, cada uma com nome, ícone, página parente e conteúdo editável; a árvore pode crescer em vários níveis. O editor trata cada linha como um bloco independente, permite inserir blocos com `+` ou `/` e criar subpáginas como blocos. Notas contextuais continuam disponíveis apenas dentro das tarefas.
 - **Detalhes da tarefa:** ao selecionar uma tarefa, mostrar seus detalhes e notas relacionadas ao lado da lista em telas de computador; adaptar a apresentação para dispositivos móveis.
 - **Autenticação:** entrada protegida pela senha pessoal do único usuário da plataforma.
-- **Persistência e sincronização:** manter tarefas e notas sincronizadas usando Vercel Blob, minimizando conflitos de edição.
+- **Persistência e sincronização:** manter tarefas, notas e páginas do Caderno no Blob; carregar o workspace na abertura e enviar alterações sob demanda pelo botão `SYNC`, minimizando operações e conflitos.
 - **Lixeira:** tarefas e grupos excluídos ficam na Lixeira por 30 dias antes da exclusão permanente. Excluir um grupo envia também suas tarefas para a Lixeira.
 - **Experiência instalável (PWA):** priorizar Chrome, Android, Linux e Windows, respeitando o suporte de instalação disponível em cada plataforma.
 - **Configurações e aparência:** acesso pelas Configurações da navegação; opções Sistema, Claro e Escuro, com preferência salva neste dispositivo e tema do sistema acompanhado em tempo real. O tema é aplicado antes da primeira pintura da página.
@@ -49,11 +50,11 @@ O detalhamento dos módulos e suas relações será definido com as próximas in
 
 - O acesso usa hash de senha `scrypt` e sessão assinada com HMAC em cookie `HttpOnly`, com validade de sete dias. O logout remove o cookie do navegador; não há revogação server-side de um token já copiado nem limite de tentativas persistente.
 - A rota de login registra localmente uma razão não sensível quando a configuração de autenticação está inválida (hash ausente/formato inválido ou segredo ausente/curto); a resposta pública permanece genérica. O usuário confirmou que, após configurar `MAXHUB_PASSWORD_HASH` no painel Vercel sem aspas nem barras invertidas, o login funciona em Production.
-- A implementação de sincronização usa um snapshot JSON privado no Blob, escrita condicional com ETag e tentativa de mesclagem por registro usando `updatedAt`. Se `get()` retornar `null` para um pathname ainda inexistente, a aplicação inicia um workspace vazio em modo Blob. Após essa correção, `GET /api/data` foi validado com HTTP 200 e `storageMode: blob`. O usuário confirmou que a sincronização com Blob também está funcionando em Production. A criação de tarefas inicia salvamento sem debounce; outras edições continuam agrupadas por 700 ms e envios de até 60 KiB usam `keepalive`. Isso não adiciona modo offline.
+- A implementação de sincronização usa um snapshot JSON privado no Blob e escrita condicional com ETag. Se `get()` retornar `null` para um pathname ainda inexistente, a aplicação inicia um workspace vazio em modo Blob. Após essa correção, `GET /api/data` foi validado com HTTP 200 e `storageMode: blob`; o usuário confirmou que a sincronização com Blob também funciona em Production. O workspace remoto é carregado uma vez ao abrir/entrar; não há PUT automático nem GET ao trocar de tela ou retomar foco. O botão único `SYNC` busca mudanças remotas se o estado local estiver limpo ou envia o snapshot se houver edições pendentes. Um `409` dispara uma leitura remota apenas para mesclar registros por `updatedAt`, preserva alterações locais e exige novo clique para gravar a mesclagem. Falhas e conflitos não são tratados como sucesso. Não há modo offline persistente.
 - Em `next dev` sem token, há armazenamento alternativo em `.maxhub-dev/workspace.json`, exclusivo para desenvolvimento e sem sincronização com a Vercel. Não é fallback de produção.
 - O snapshot tem limite de 1 MB. Itens da Lixeira expirados deixam de ser retornados quando o workspace é normalizado e são removidos fisicamente na próxima gravação; não há limpeza agendada.
 - A interface implementa a base PWA e registra o service worker em produção. A prévia Markdown do MVP cobre um subconjunto da sintaxe, não toda a especificação CommonMark.
-- A aparência oferece os temas Sistema, Claro e Escuro. A escolha fica no armazenamento local do navegador; Sistema acompanha a preferência do dispositivo, e um script pré-hidratação evita exibir a paleta errada durante o carregamento.
+- A aparência oferece os temas Sistema, Claro e Escuro. A escolha fica no armazenamento local do navegador; Sistema acompanha a preferência do dispositivo, e um script pré-hidratação aplica a paleta antes do conteúdo. O HTML raiz define atributos iniciais estáveis e suprime a divergência esperada desses atributos durante a hidratação.
 
 ## 3. Atores e usuários
 
@@ -68,9 +69,9 @@ O detalhamento dos módulos e suas relações será definido com as próximas in
 - **RN04 — Semana e fuso:** considerar domingo como primeiro dia da semana e o fuso de Brasília.
 - **RN05 — Tarefas sem prazo:** mantê-las na lista Hoje, inclusive após a passagem dos dias, até que recebam prazo ou sejam concluídas/arquivadas.
 - **RN06 — Atraso:** tarefa com prazo vencido deve ter estado atrasado e continuar vinculada ao mesmo grupo.
-- **RN07 — Notas associadas:** permitir múltiplas notas por grupo e por tarefa; notas de tarefa cumprem também o papel de etiquetas/contexto.
-- **RN08 — Markdown:** editar tarefas/notas em Markdown e disponibilizar visualização formatada no estilo do Notion.
-- **RN09 — Sincronização:** sincronizar tarefas e notas entre os dispositivos do usuário por meio do armazenamento definido com Vercel Blob, buscando minimizar conflitos.
+- **RN07 — Notas associadas:** permitir múltiplas notas contextuais vinculadas a cada tarefa; não oferecer notas soltas por grupo.
+- **RN08 — Markdown:** editar páginas do Caderno e notas de tarefa em Markdown, com visualização formatada.
+- **RN09 — Sincronização:** sincronizar tarefas, notas e páginas do Caderno entre dispositivos via Vercel Blob, buscando minimizar conflitos.
 - **RN10 — Tema:** oferecer Sistema, Claro e Escuro, mantendo `#47b8ec` como cor de destaque; Sistema acompanha a preferência do dispositivo.
 - **RN11 — Conta individual:** o sistema terá um único usuário, que acessa com sua senha pessoal.
 - **RN12 — Lixeira:** manter tarefas e grupos excluídos por 30 dias antes de removê-los permanentemente; excluir um grupo também envia suas tarefas à Lixeira.
@@ -83,8 +84,8 @@ O detalhamento dos módulos e suas relações será definido com as próximas in
 - **RF02 — Propriedades da tarefa:** permitir editar prazo/data, prioridade, cor e grupo da tarefa.
 - **RF03 — Organização temporal na aba Tarefas:** apresentar Hoje, Amanhã, cada dia restante da semana atual, Depois (semana seguinte em diante) e Atrasadas; tarefas sem prazo ficam em Hoje e tarefas vencidas permanecem no grupo original.
 - **RF04 — Aba Calendário:** apresentar uma grade mensal com semanas de domingo a sábado, navegação para mês anterior/próximo e dias com tarefas que têm prazo marcados. Selecionar um dia mostra seus prazos; sem seleção, mostrar os prazos do mês. Respeitar o grupo e o estado de cada tarefa; não transformar tarefas sem prazo em eventos.
-- **RF05 — Aba Notas:** apresentar múltiplas notas sincronizadas organizadas por grupo e permitir editar seu conteúdo em Markdown, com visualização formatada.
-- **RF06 — Notas de grupo e tarefa:** permitir várias notas soltas em cada grupo e várias notas vinculadas a tarefas; usar as notas da tarefa como etiquetas/contexto, sem etiquetas separadas.
+- **RF05 — Aba Caderno:** apresentar a página raiz `/` em tela inteira, sem cabeçalho redundante ou borda externa; cada linha do conteúdo é um bloco independente, `Enter` cria outro bloco e `/page` ou `+` insere um bloco de subpágina. Cada página tem nome, ícone, parente e conteúdo Markdown com visualização formatada.
+- **RF06 — Notas de tarefa:** permitir várias notas contextuais Markdown dentro de cada tarefa; não exibir uma aba separada de notas soltas.
 - **RF07 — Detalhes e notas da tarefa:** ao selecionar uma tarefa, mostrar os detalhes e as notas associadas junto à lista no desktop; oferecer uma apresentação adaptada em mobile.
 - **RF08 — Aba Hoje:** mostrar tarefas com prazo para hoje e tarefas sem prazo, mantendo estas últimas em Hoje até que o usuário defina prazo ou as conclua/arquive.
 - **RF09 — Atrasadas:** identificar tarefas com prazo vencido como atrasadas, sem removê-las de seu grupo.
@@ -92,7 +93,7 @@ O detalhamento dos módulos e suas relações será definido com as próximas in
 - **RF11 — Lixeira:** mover tarefas excluídas para Lixeira; permitir restaurá-las durante 30 dias, depois dos quais são excluídas permanentemente.
 - **RF12 — Grupos:** permitir criar, renomear, reordenar, arquivar e excluir grupos; excluir move o grupo e suas tarefas para Lixeira por 30 dias.
 - **RF13 — Autenticação por senha:** permitir ao único usuário entrar com sua senha pessoal.
-- **RF14 — Sincronização com Blob:** sincronizar tarefas e notas através do armazenamento Vercel Blob, minimizando conflitos.
+- **RF14 — Sincronização com Blob:** sincronizar tarefas, notas e páginas do Caderno através do Vercel Blob, minimizando conflitos.
 - **RF15 — Aplicação instalável:** permitir instalação em navegadores/sistemas compatíveis, priorizando Chrome, Android, Linux e Windows.
 - **RF16 — Tema e tipografia:** oferecer Sistema, Claro e Escuro, com `#47b8ec` como cor de destaque; usar Quicksand nos títulos e Inter nos textos.
 - **RF17 — Integrações futuras:** deixar o produto aberto a integrações que forem especificadas depois.
@@ -101,9 +102,9 @@ O detalhamento dos módulos e suas relações será definido com as próximas in
 
 - **RNF01 — Responsividade:** adaptar toda a experiência a dispositivos móveis e computadores.
 - **RNF02 — Instalabilidade:** oferecer PWA instalável nos sistemas operacionais e navegadores compatíveis.
-- **RNF03 — Sincronização entre dispositivos:** manter tarefas e notas sincronizadas por meio do Blob.
+- **RNF03 — Sincronização entre dispositivos:** manter tarefas, notas e páginas do Caderno sincronizadas por meio do Blob.
 - **RNF04 — Segurança:** proteger o acesso por senha; requisitos técnicos adicionais ainda serão definidos.
-- **RNF05 — Persistência de texto:** preservar conteúdo Markdown em tarefas e notas.
+- **RNF05 — Persistência de texto:** preservar conteúdo Markdown em páginas do Caderno e notas de tarefa.
 - **RNF06 — Consistência:** minimizar conflitos ao sincronizar e editar dados em múltiplos dispositivos.
 - **RNF07 — Retenção da Lixeira:** aplicar retenção de 30 dias antes da exclusão permanente de itens removidos.
 
@@ -154,15 +155,15 @@ Como usuário, quero visualizar prazos em um calendário mensal e consultar as t
 - **AC3:** a lista respeita o filtro de grupo e preserva grupo e estado das tarefas; selecionar uma tarefa abre os detalhes existentes.
 - **AC4:** tarefas sem prazo continuam em Hoje na aba Tarefas e não são posicionadas como eventos no calendário.
 
-### US04 — Notas de grupos e tarefas
+### US04 — Caderno e notas de tarefas
 
-Como único usuário, quero escrever várias notas Markdown soltas num grupo ou associadas a uma tarefa para manter contexto junto à minha organização.
+Como único usuário, quero organizar páginas Markdown em um Caderno hierárquico e manter notas contextuais dentro das tarefas.
 
-- **AC1:** cada grupo pode conter notas independentes de tarefas.
-- **AC2:** uma tarefa pode ter várias notas associadas.
-- **AC3:** edição de notas e tarefas suporta conteúdo Markdown com visualização formatada semelhante ao Notion.
-- **AC4:** notas e tarefas permanecem sincronizadas pelo armazenamento definido com Blob, com estratégia que minimize conflitos.
-- **AC5:** em telas de computador, selecionar uma tarefa mostra seus detalhes e notas associadas ao lado da lista; em mobile, os detalhes são apresentados em layout adaptado.
+- **AC1:** o Caderno sempre contém uma página raiz `/`, da qual podem ser criadas páginas filhas e descendentes em múltiplos níveis.
+- **AC2:** cada página pode ter nome, ícone, página parente e conteúdo Markdown editáveis; os campos de edição ficam ocultos até o usuário selecionar **Editar**.
+- **AC3:** a edição Markdown tem visualização formatada semelhante ao Notion.
+- **AC4:** uma tarefa pode ter várias notas contextuais associadas e continua permitindo editá-las em seu painel de detalhes.
+- **AC5:** páginas, tarefas e notas continuam sincronizadas pelo armazenamento Blob; a mesclagem preserva páginas em conflito.
 
 ### US05 — Acesso seguro
 
@@ -217,9 +218,9 @@ O usuário abre Hoje para ver as tarefas com prazo do dia atual e as tarefas sem
 
 O usuário abre Calendário, navega entre meses numa grade de domingo a sábado e seleciona um dia para consultar seus prazos. Sem um dia selecionado, consulta os prazos do mês. Tarefas sem prazo continuam em Hoje na aba Tarefas e não aparecem como eventos.
 
-### Jornada 4 — Registrar contexto em notas
+### Jornada 4 — Organizar páginas e contexto
 
-O usuário escreve múltiplas notas Markdown soltas num grupo ou associa notas a uma tarefa. No computador, ao selecionar a tarefa, lê e edita o contexto ao lado da lista; no celular, acessa a mesma informação numa apresentação adaptada. As alterações sincronizam entre dispositivos usando Blob, minimizando conflitos.
+O usuário abre o Caderno, navega pela raiz `/`, cria páginas e subpáginas e edita seus nomes, ícones, parentes e conteúdo Markdown. Notas de contexto continuam dentro das tarefas; no computador aparecem junto ao painel de detalhes e no celular em layout adaptado. As alterações sincronizam pelo Blob.
 
 ### Jornada 5 — Acessar como aplicação
 
@@ -247,5 +248,8 @@ O usuário autentica-se com sua senha pessoal, instala o MaxHub como PWA usando 
 | 25/11/2026 | Adicionado diagnóstico server-side sanitizado para configuração inválida de autenticação; a mensagem e o status públicos permanecem inalterados. A mudança ainda é local e precisa de deploy para diagnosticar Production. |
 | 25/11/2026 | Confirmado pelo painel Vercel que as variáveis de autenticação aparecem cadastradas em Production; a configuração efetiva em runtime permanece a validar após deploy do diagnóstico. |
 | 25/11/2026 | Usuário confirmou login e sincronização com Blob funcionando em Production após configurar `MAXHUB_PASSWORD_HASH` no painel sem aspas nem barras invertidas; nenhum valor secreto foi registrado. |
-| 25/11/2026 | Corrigido risco de tarefa recém-criada no celular ficar sem persistência durante o debounce/refresh: criação salva imediatamente, snapshots pequenos usam `keepalive`, refresh sem mudanças preserva a referência local; testes focados, lint, typecheck e build passaram. A tarefa reportada como desaparecida não foi recuperada nem examinada. |
-| 25/11/2026 | Adicionadas Configurações com temas Sistema, Claro e Escuro, persistência local da preferência, atualização reativa ao tema do dispositivo e adaptação da interface para tema escuro com inicialização antes da pintura. |
+| 25/11/2026 | Após relatos de `409` e consumo elevado de operações, substituídos PUTs automáticos por botão único `SYNC`; leitura do workspace ocorre na abertura/entrada, sem atualização em foco. O botão busca a versão remota quando não há alterações locais e envia o snapshot quando há pendências. Em conflito, a versão remota é mesclada com as alterações locais e só é gravada após novo clique. Teste simulado confirma recuperação do ETag e nova tentativa; não foi feito PUT real ao Blob nem acesso a Production/dados reais. Lint, typecheck e build passaram. |
+| 25/11/2026 | Adicionadas Configurações com temas Sistema, Claro e Escuro, persistência local da preferência, atualização reativa ao tema do dispositivo e adaptação da interface para tema escuro com inicialização antes da pintura; corrigida a divergência de hidratação dos atributos do tema no elemento raiz. |
+| 25/11/2026 | Substituída a aba Notas por Caderno: raiz `/`, páginas aninháveis com nome, ícone, parente e conteúdo Markdown. Notas antigas soltas migram para páginas; notas de tarefa são mantidas. Validação e mesclagem manual de sincronização passam a incluir as páginas. |
+| 25/11/2026 | Redesenhada a página do Caderno para priorizar conteúdo em leitura, revelar metadados apenas ao clicar em Editar e expandir o editor Markdown para preencher o painel disponível. |
+| 25/11/2026 | Caderno passa a usar blocos por linha, com menu `+` e comando `/page` para criar subpáginas inline; removidos cabeçalho redundante e moldura externa para preencher a área disponível. |

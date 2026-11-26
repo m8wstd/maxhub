@@ -17,7 +17,6 @@ const themeInitScript = `(() => {
     : preference;
   document.documentElement.dataset.theme = resolved;
   document.documentElement.dataset.themePreference = preference;
-  document.documentElement.style.colorScheme = resolved;
 })();`;
 
 const inter = Inter({
@@ -52,7 +51,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html
       lang="pt-BR"
+      data-theme="light"
+      data-theme-preference="system"
       className={`${inter.variable} ${quicksand.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
       <body className="min-h-full">
         <Script
