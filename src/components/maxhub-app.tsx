@@ -19,23 +19,30 @@ import {
   ListTodo,
   LogOut,
   Menu,
+  Monitor,
+  Moon,
   MoreHorizontal,
   Plus,
   Search,
+  Settings,
   Settings2,
+  Sun,
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MarkdownPreview } from "@/components/markdown-preview";
+import { canKeepaliveWorkspaceSave, workspaceSaveDelay } from "@/lib/autosave-policy.mjs";
 import type { Note, Priority, Task, TaskGroup, Workspace } from "@/lib/maxhub-types";
 import { bucketForDate, capitalize, dateFromOffset, formatDate, remainingWeekdays, todayInSaoPaulo, weekdayForDate } from "@/lib/task-date";
 
-type ViewMode = "today" | "tasks" | "calendar" | "notes" | "trash" | "archive";
+type ViewMode = "today" | "tasks" | "calendar" | "notes" | "trash" | "archive" | "settings";
+type ThemePreference = "system" | "light" | "dark";
 type Bucket = { id: string; label: string; date?: string };
 
 const COLORS = ["#47b8ec", "#f0a36d", "#8e85e8", "#75b88b", "#e77e93", "#e4bd5c"];
 const WEEKDAYS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const THEME_STORAGE_KEY = "maxhub-theme";
 const PRIORITIES: { value: Priority; label: string }[] = [
   { value: "low", label: "Baixa" },
   { value: "normal", label: "Normal" },
@@ -123,17 +130,27 @@ function mergeWorkspace(local: Workspace, remote: Workspace): Workspace {
     }
     return [...items.values()];
   }
-  return {
+  const merged = {
     groups: mergeById(local.groups, remote.groups),
     tasks: mergeById(local.tasks, remote.tasks),
     notes: mergeById(local.notes, remote.notes),
   };
+  const sameItems = <T extends { id: string }>(left: T[], right: T[]) => {
+    if (left.length !== right.length) return false;
+    const rightItems = new Set(right);
+    return left.every((item) => rightItems.has(item));
+  };
+  return sameItems(local.groups, merged.groups) &&
+    sameItems(local.tasks, merged.tasks) &&
+    sameItems(local.notes, merged.notes)
+    ? local
+    : merged;
 }
 
 function MarkdownEditor({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const [preview, setPreview] = useState(false);
   return (
-    <div className="overflow-hidden rounded-xl border border-border bg-white">
+    <div className="overflow-hidden rounded-xl border border-border bg-card">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="text-xs font-medium text-muted-foreground">Markdown</span>
         <button className="text-xs font-medium text-primary" onClick={() => setPreview(!preview)} type="button">
@@ -216,9 +233,55 @@ export function MaxhubApp() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [today, setToday] = useState("2000-01-01");
   const [nowMs, setNowMs] = useState(0);
+  const [themePreference, setThemePreference] = useState<ThemePreference>(() => {
+    if (typeof window === "undefined") return "system";
+    try {
+      const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+      return stored === "system" || stored === "light" || stored === "dark" ? stored : "system";
+    } catch {
+      return "system";
+    }
+  });
   const versionRef = useRef<string | null>(null);
   const stateRef = useRef<Workspace | null>(null);
   const savingRef = useRef(false);
+  const hydratedRef = useRef(false);
+  const saveImmediatelyRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const root = document.documentElement;
+    const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      const resolvedTheme = themePreference === "system"
+        ? systemTheme.matches ? "dark" : "light"
+        : themePreference;
+      root.dataset.theme = resolvedTheme;
+      root.dataset.themePreference = themePreference;
+      root.style.colorScheme = resolvedTheme;
+    };
+    const handleSystemThemeChange = () => {
+      if (themePreference === "system") applyTheme();
+    };
+
+    applyTheme();
+    systemTheme.addEventListener("change", handleSystemThemeChange);
+    return () => systemTheme.removeEventListener("change", handleSystemThemeChange);
+  }, [themePreference]);
+
+  const chooseTheme = (preference: ThemePreference) => {
+    setThemePreference(preference);
+    const resolvedTheme = preference === "system"
+      ? window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"
+      : preference;
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.dataset.themePreference = preference;
+    document.documentElement.style.colorScheme = resolvedTheme;
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, preference);
+    } catch {
+      setError("O tema foi aplicado, mas não pôde ser salvo neste navegador.");
+    }
+  };
 
   const acceptSnapshot = useCallback((data: { workspace: Workspace; version: string | null; storageMode: "blob" | "local-dev" }) => {
     versionRef.current = data.version;
@@ -250,6 +313,7 @@ export function MaxhubApp() {
       setError(message);
       return message;
     } finally {
+      hydratedRef.current = true;
       setLoading(false);
     }
   }, [acceptSnapshot, requestWorkspace]);
@@ -269,7 +333,10 @@ export function MaxhubApp() {
         if (active) setError(caught instanceof Error ? caught.message : "Não foi possível carregar os dados.");
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active) {
+          hydratedRef.current = true;
+          setLoading(false);
+        }
       });
     const interval = window.setInterval(refreshClock, 60_000);
     const refresh = () => {
@@ -284,21 +351,25 @@ export function MaxhubApp() {
     };
   }, [acceptSnapshot, loadWorkspace, requestWorkspace]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     stateRef.current = workspace;
   }, [workspace]);
 
   useEffect(() => {
-    if (!workspace || loading || savingRef.current) return;
+    if (!workspace || !hydratedRef.current || savingRef.current) return;
+    const delay = workspaceSaveDelay(saveImmediatelyRef.current);
     const timer = window.setTimeout(async () => {
+      saveImmediatelyRef.current = false;
       let retryAfterConflict = false;
       savingRef.current = true;
       setSyncStatus("syncing");
       try {
+        const body = JSON.stringify({ workspace, version: versionRef.current });
         const response = await fetch("/api/data", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ workspace, version: versionRef.current }),
+          body,
+          ...(canKeepaliveWorkspaceSave(body) ? { keepalive: true } : {}),
         });
         if (response.status === 401) {
           setWorkspace(null);
@@ -331,9 +402,9 @@ export function MaxhubApp() {
           setWorkspace((latest) => latest ? { ...latest } : latest);
         }
       }
-    }, 700);
+    }, delay);
     return () => window.clearTimeout(timer);
-  }, [workspace, loading]);
+  }, [workspace]);
 
   const activeGroups = useMemo(() => workspace?.groups
     .filter((group) => !group.deletedAt)
@@ -443,6 +514,7 @@ export function MaxhubApp() {
       return;
     }
     const task = newTask(targetGroup);
+    saveImmediatelyRef.current = true;
     setWorkspace((current) => current ? { ...current, tasks: [...current.tasks, task] } : current);
     setSelectedTaskId(task.id);
     setMobileDetail(true);
@@ -543,7 +615,9 @@ export function MaxhubApp() {
           ? "Notas"
           : mode === "trash"
             ? "Lixeira"
-            : "Arquivadas";
+            : mode === "archive"
+              ? "Arquivadas"
+              : "Configurações";
 
   const reorderGroup = (group: TaskGroup, direction: -1 | 1) => {
     const sorted = [...activeGroups];
@@ -630,6 +704,7 @@ export function MaxhubApp() {
         <div className="sidebar-spacer" />
         <button className={`nav-item ${mode === "archive" ? "active" : ""}`} onClick={() => selectedNav("archive")}><Archive size={17} /> Arquivadas</button>
         <button className={`nav-item ${mode === "trash" ? "active" : ""}`} onClick={() => selectedNav("trash")}><Trash2 size={17} /> Lixeira <span className="nav-count">{trashedTasks.length + trashedGroups.length + trashedNotes.length}</span></button>
+        <button className={`nav-item ${mode === "settings" ? "active" : ""}`} onClick={() => selectedNav("settings")}><Settings size={17} /> Configurações</button>
         <div className="sidebar-footer">
           <div className={`sync-dot ${syncStatus}`} />
           <span>{syncStatus === "syncing" ? "Sincronizando" : syncStatus === "offline" ? "Sem sincronização" : storageMode === "local-dev" ? "Teste local" : "Tudo salvo"}</span>
@@ -660,10 +735,11 @@ export function MaxhubApp() {
         <div className="view-content">
           <div className="page-heading">
             <div>
-              <p className="eyebrow">{new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${today}T12:00:00Z`))}</p>
+              <p className="eyebrow">{mode === "settings" ? "PREFERÊNCIAS" : new Intl.DateTimeFormat("pt-BR", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" }).format(new Date(`${today}T12:00:00Z`))}</p>
               <h1>{mode === "tasks" && groupId ? selectedGroup?.name : headerTitle}</h1>
               <p className="page-description">
-                {mode === "today" ? "Tarefas de hoje e sem prazo." :
+                {mode === "settings" ? "Personalize a aparência do seu espaço." :
+                  mode === "today" ? "Tarefas de hoje e sem prazo." :
                   mode === "tasks" ? "Prazos de todas as tarefas organizados por período." :
                     mode === "calendar" ? "Consulte os prazos no calendário mensal." :
                       mode === "notes" ? "Ideias e referências organizadas por grupo." :
@@ -674,6 +750,39 @@ export function MaxhubApp() {
             {(mode === "today" || mode === "tasks") && <button className="primary-button" onClick={addTask}><Plus size={17} /> Nova tarefa</button>}
             {mode === "notes" && <button className="primary-button" onClick={() => setShowNewNote(true)}><Plus size={17} /> Nova nota</button>}
           </div>
+
+          {mode === "settings" && (
+            <section className="settings-panel" aria-labelledby="appearance-heading">
+              <div className="settings-section-heading">
+                <div>
+                  <h2 id="appearance-heading">Aparência</h2>
+                  <p>Escolha como o MaxHub deve aparecer neste dispositivo.</p>
+                </div>
+                <Settings size={19} aria-hidden="true" />
+              </div>
+              <fieldset className="theme-options">
+                <legend>Tema</legend>
+                <p id="theme-description">Sistema acompanha a preferência de aparência do seu dispositivo.</p>
+                <div className="theme-option-list">
+                  <label className={`theme-option${themePreference === "system" ? " selected" : ""}`}>
+                    <input checked={themePreference === "system"} name="theme" onChange={() => chooseTheme("system")} type="radio" value="system" />
+                    <Monitor size={18} aria-hidden="true" />
+                    <span>Sistema</span>
+                  </label>
+                  <label className={`theme-option${themePreference === "light" ? " selected" : ""}`}>
+                    <input checked={themePreference === "light"} name="theme" onChange={() => chooseTheme("light")} type="radio" value="light" />
+                    <Sun size={18} aria-hidden="true" />
+                    <span>Claro</span>
+                  </label>
+                  <label className={`theme-option${themePreference === "dark" ? " selected" : ""}`}>
+                    <input checked={themePreference === "dark"} name="theme" onChange={() => chooseTheme("dark")} type="radio" value="dark" />
+                    <Moon size={18} aria-hidden="true" />
+                    <span>Escuro</span>
+                  </label>
+                </div>
+              </fieldset>
+            </section>
+          )}
 
           {mode === "today" && (
             <>
@@ -957,6 +1066,8 @@ export function MaxhubApp() {
           </>
         ) : selectedNote && mode === "notes" ? (
           <div className="detail-placeholder"><FileText size={25} /><p>A nota selecionada pode ser editada na área central.</p></div>
+        ) : mode === "settings" ? (
+          <div className="detail-placeholder"><Settings size={25} /><h3>Configurações</h3><p>As preferências de aparência ficam salvas neste dispositivo.</p></div>
         ) : (
           <div className="detail-placeholder"><div className="detail-empty-mark"><ListTodo size={24} /></div><h3>Seu espaço de trabalho</h3><p>Selecione uma tarefa para ver detalhes, subtarefas e notas.</p><button className="text-button" onClick={addTask}><Plus size={15} /> Criar tarefa</button></div>
         )}

@@ -22,7 +22,8 @@
 - **25/11/2026 — Validações técnicas:** `npm run lint`, `npm run typecheck` e `npm run build` concluíram com sucesso neste checkout.
 - **25/11/2026 — Blob privado:** teste isolado com o SDK criou, leu e removeu um objeto privado temporário com sucesso, usando as variáveis carregadas pelo Next de `.env.local`.
 - **25/11/2026 — Leitura via aplicação:** depois de tratar `get()` retornando `null` como workspace vazio, `GET /api/data` retornou HTTP 200 com `storageMode: blob`. O teste não examinou nem exibiu tarefas ou notas.
-- **Pendente:** validar gravação e sincronização do snapshot pela aplicação; nenhum `PUT` foi realizado.
+- **25/11/2026 — Production:** o usuário confirmou que login e sincronização com Blob estão funcionando após configurar `MAXHUB_PASSWORD_HASH` no painel Vercel sem aspas nem barras invertidas. Nenhum valor secreto é registrado neste documento.
+- **25/11/2026 — Salvamento de tarefas no celular:** identificado um risco de perda antes da gravação: a criação dependia do debounce de 700 ms, que podia ser reiniciado/cancelado pelo refresh ao voltar ao app. Novas tarefas agora iniciam salvamento imediatamente, requisições pequenas usam `keepalive` e um refresh sem alterações não troca a referência do workspace. Testes focados, lint, typecheck e build passaram. A tarefa relatada como desaparecida não foi recuperada nem seus dados foram examinados.
 
 ## 2. Visão geral da arquitetura
 
@@ -39,6 +40,7 @@ O MaxHub será um hub pessoal de produtividade, instalável em celular e computa
 - **Persistência e sincronização:** manter tarefas e notas sincronizadas usando Vercel Blob, minimizando conflitos de edição.
 - **Lixeira:** tarefas e grupos excluídos ficam na Lixeira por 30 dias antes da exclusão permanente. Excluir um grupo envia também suas tarefas para a Lixeira.
 - **Experiência instalável (PWA):** priorizar Chrome, Android, Linux e Windows, respeitando o suporte de instalação disponível em cada plataforma.
+- **Configurações e aparência:** acesso pelas Configurações da navegação; opções Sistema, Claro e Escuro, com preferência salva neste dispositivo e tema do sistema acompanhado em tempo real. O tema é aplicado antes da primeira pintura da página.
 - **Interface:** usar Quicksand nos títulos e Inter nos textos; demais escolhas visuais podem ser propostas e refinadas com o usuário.
 
 O detalhamento dos módulos e suas relações será definido com as próximas informações do projeto.
@@ -46,11 +48,12 @@ O detalhamento dos módulos e suas relações será definido com as próximas in
 ### Estado técnico do MVP em 25/11/2026
 
 - O acesso usa hash de senha `scrypt` e sessão assinada com HMAC em cookie `HttpOnly`, com validade de sete dias. O logout remove o cookie do navegador; não há revogação server-side de um token já copiado nem limite de tentativas persistente.
-- A rota de login registra localmente uma razão não sensível quando a configuração de autenticação está inválida (hash ausente/formato inválido ou segredo ausente/curto); a resposta pública permanece genérica. O painel da Vercel mostra as variáveis de autenticação cadastradas em Production, mas a disponibilidade/formato em runtime ainda precisa ser confirmada pelo diagnóstico após deploy desta mudança.
-- A implementação de sincronização usa um snapshot JSON privado no Blob, escrita condicional com ETag e tentativa de mesclagem por registro usando `updatedAt`. Se `get()` retornar `null` para um pathname ainda inexistente, a aplicação inicia um workspace vazio em modo Blob. Após essa correção, `GET /api/data` foi validado com HTTP 200 e `storageMode: blob`; tarefas e notas da resposta não foram examinadas. A gravação ainda não foi testada.
+- A rota de login registra localmente uma razão não sensível quando a configuração de autenticação está inválida (hash ausente/formato inválido ou segredo ausente/curto); a resposta pública permanece genérica. O usuário confirmou que, após configurar `MAXHUB_PASSWORD_HASH` no painel Vercel sem aspas nem barras invertidas, o login funciona em Production.
+- A implementação de sincronização usa um snapshot JSON privado no Blob, escrita condicional com ETag e tentativa de mesclagem por registro usando `updatedAt`. Se `get()` retornar `null` para um pathname ainda inexistente, a aplicação inicia um workspace vazio em modo Blob. Após essa correção, `GET /api/data` foi validado com HTTP 200 e `storageMode: blob`. O usuário confirmou que a sincronização com Blob também está funcionando em Production. A criação de tarefas inicia salvamento sem debounce; outras edições continuam agrupadas por 700 ms e envios de até 60 KiB usam `keepalive`. Isso não adiciona modo offline.
 - Em `next dev` sem token, há armazenamento alternativo em `.maxhub-dev/workspace.json`, exclusivo para desenvolvimento e sem sincronização com a Vercel. Não é fallback de produção.
 - O snapshot tem limite de 1 MB. Itens da Lixeira expirados deixam de ser retornados quando o workspace é normalizado e são removidos fisicamente na próxima gravação; não há limpeza agendada.
 - A interface implementa a base PWA e registra o service worker em produção. A prévia Markdown do MVP cobre um subconjunto da sintaxe, não toda a especificação CommonMark.
+- A aparência oferece os temas Sistema, Claro e Escuro. A escolha fica no armazenamento local do navegador; Sistema acompanha a preferência do dispositivo, e um script pré-hidratação evita exibir a paleta errada durante o carregamento.
 
 ## 3. Atores e usuários
 
@@ -68,7 +71,7 @@ O detalhamento dos módulos e suas relações será definido com as próximas in
 - **RN07 — Notas associadas:** permitir múltiplas notas por grupo e por tarefa; notas de tarefa cumprem também o papel de etiquetas/contexto.
 - **RN08 — Markdown:** editar tarefas/notas em Markdown e disponibilizar visualização formatada no estilo do Notion.
 - **RN09 — Sincronização:** sincronizar tarefas e notas entre os dispositivos do usuário por meio do armazenamento definido com Vercel Blob, buscando minimizar conflitos.
-- **RN10 — Tema:** inicialmente oferecer apenas modo claro, usando `#47b8ec` como cor de tema.
+- **RN10 — Tema:** oferecer Sistema, Claro e Escuro, mantendo `#47b8ec` como cor de destaque; Sistema acompanha a preferência do dispositivo.
 - **RN11 — Conta individual:** o sistema terá um único usuário, que acessa com sua senha pessoal.
 - **RN12 — Lixeira:** manter tarefas e grupos excluídos por 30 dias antes de removê-los permanentemente; excluir um grupo também envia suas tarefas à Lixeira.
 - **RN13 — Lembretes:** não incluir lembretes ou notificações nesta etapa.
@@ -91,7 +94,7 @@ O detalhamento dos módulos e suas relações será definido com as próximas in
 - **RF13 — Autenticação por senha:** permitir ao único usuário entrar com sua senha pessoal.
 - **RF14 — Sincronização com Blob:** sincronizar tarefas e notas através do armazenamento Vercel Blob, minimizando conflitos.
 - **RF15 — Aplicação instalável:** permitir instalação em navegadores/sistemas compatíveis, priorizando Chrome, Android, Linux e Windows.
-- **RF16 — Tema e tipografia:** manter apenas modo claro com `#47b8ec`; usar Quicksand nos títulos e Inter nos textos.
+- **RF16 — Tema e tipografia:** oferecer Sistema, Claro e Escuro, com `#47b8ec` como cor de destaque; usar Quicksand nos títulos e Inter nos textos.
 - **RF17 — Integrações futuras:** deixar o produto aberto a integrações que forem especificadas depois.
 
 ## 6. Requisitos não funcionais
@@ -225,7 +228,7 @@ O usuário autentica-se com sua senha pessoal, instala o MaxHub como PWA usando 
 ## 14. Pontos em aberto
 
 - **Horários e recorrência:** ainda não definido se tarefas terão hora ou recorrência.
-- **Sincronização:** o acesso ao Blob privado e a leitura GET da aplicação foram confirmados; ainda falta testar a gravação condicional do snapshot sem risco aos dados existentes. Blob é armazenamento de objetos, não banco de dados; avaliar um banco se o volume, a concorrência ou os requisitos de auditoria crescerem.
+- **Sincronização:** login e sincronização com Blob em Production foram confirmados pelo usuário. Blob é armazenamento de objetos, não banco de dados; avaliar um banco se o volume, a concorrência ou os requisitos de auditoria crescerem.
 - **Offline:** não há modo offline de escrita na aplicação. O arquivo local em `.maxhub-dev` é apenas um recurso de desenvolvimento sem Blob e não sincroniza com outros dispositivos.
 - **Integrações futuras:** quais ferramentas devem ser priorizadas?
 - **Design:** tipografia definida como Quicksand nos títulos e Inter nos textos; ícones, estados vazios e acessibilidade podem ser propostos e refinados.
@@ -243,3 +246,6 @@ O usuário autentica-se com sua senha pessoal, instala o MaxHub como PWA usando 
 | 25/11/2026 | Corrigido o tratamento de `get()` privado retornando `null` como workspace vazio em modo Blob; lint, typecheck e build passaram, e `GET /api/data` respondeu HTTP 200 com `storageMode: blob`. Nenhum `PUT` foi realizado e tarefas/notas não foram examinadas. |
 | 25/11/2026 | Adicionado diagnóstico server-side sanitizado para configuração inválida de autenticação; a mensagem e o status públicos permanecem inalterados. A mudança ainda é local e precisa de deploy para diagnosticar Production. |
 | 25/11/2026 | Confirmado pelo painel Vercel que as variáveis de autenticação aparecem cadastradas em Production; a configuração efetiva em runtime permanece a validar após deploy do diagnóstico. |
+| 25/11/2026 | Usuário confirmou login e sincronização com Blob funcionando em Production após configurar `MAXHUB_PASSWORD_HASH` no painel sem aspas nem barras invertidas; nenhum valor secreto foi registrado. |
+| 25/11/2026 | Corrigido risco de tarefa recém-criada no celular ficar sem persistência durante o debounce/refresh: criação salva imediatamente, snapshots pequenos usam `keepalive`, refresh sem mudanças preserva a referência local; testes focados, lint, typecheck e build passaram. A tarefa reportada como desaparecida não foi recuperada nem examinada. |
+| 25/11/2026 | Adicionadas Configurações com temas Sistema, Claro e Escuro, persistência local da preferência, atualização reativa ao tema do dispositivo e adaptação da interface para tema escuro com inicialização antes da pintura. |

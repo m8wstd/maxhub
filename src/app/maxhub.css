@@ -177,6 +177,18 @@ h1, h2, h3 { font-family: var(--font-quicksand), sans-serif; }
 .note-title-input { width: 100%; border: 0; outline: 0; color: #34444d; font: 700 19px var(--font-quicksand), sans-serif; }
 .small-empty { padding: 20px 14px; color: #a4afb5; font-size: 11px; line-height: 1.6; }
 .markdown-preview { color: #617079; }
+.settings-panel { max-width: 700px; padding: 24px; border: 1px solid #edf1f3; border-radius: 14px; background: white; }
+.settings-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; color: #47b8ec; }
+.settings-section-heading h2 { margin: 0; color: #34444d; font-size: 18px; font-weight: 700; }
+.settings-section-heading p { margin: 6px 0 0; color: #83909a; font-size: 12px; }
+.theme-options { margin: 24px 0 0; padding: 0; border: 0; }
+.theme-options legend { margin-bottom: 5px; color: #52616a; font-size: 12px; font-weight: 700; }
+.theme-options > p { margin: 0 0 13px; color: #83909a; font-size: 11px; }
+.theme-option-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; }
+.theme-option { display: flex; min-height: 60px; align-items: center; gap: 9px; padding: 0 12px; border: 1px solid #edf1f3; border-radius: 9px; background: #fbfcfd; color: #52616a; font-size: 12px; font-weight: 600; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
+.theme-option input { width: 15px; height: 15px; margin: 0; accent-color: #47b8ec; }
+.theme-option.selected { border-color: #8bd1ed; background: #eff8fc; color: #218bb6; }
+.theme-option:focus-within { outline: 2px solid #47b8ec80; outline-offset: 2px; }
 .trash-row { display: flex; min-height: 56px; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid #edf1f3; color: #87949b; }
 .trash-row strong { color: #54636b; font-size: 12px; font-weight: 600; }
 .trash-row > span:not(.color-dot) { color: #a2adb3; font-size: 10px; }
@@ -273,3 +285,179 @@ h1, h2, h3 { font-family: var(--font-quicksand), sans-serif; }
   .detail-body { padding: 20px 19px 35px; }
   .login-card { padding: 29px 24px; }
 }
+
+  html[data-theme="dark"] body { background: #111922; color: var(--text-primary); }
+  html[data-theme="dark"] .app-shell { background: #111922; }
+  html[data-theme="dark"] .sidebar,
+  html[data-theme="dark"] .topbar,
+  html[data-theme="dark"] .detail-panel,
+  html[data-theme="dark"] .group-actions,
+  html[data-theme="dark"] .calendar-lane,
+  html[data-theme="dark"] .calendar-panel,
+  html[data-theme="dark"] .calendar-events,
+  html[data-theme="dark"] .notes-workspace,
+  html[data-theme="dark"] .note-editor,
+  html[data-theme="dark"] .login-card,
+  html[data-theme="dark"] .settings-panel { background: var(--surface); }
+  html[data-theme="dark"] .main-column { background: var(--surface-muted); }
+  html[data-theme="dark"] .sidebar,
+  html[data-theme="dark"] .topbar,
+  html[data-theme="dark"] .detail-panel,
+  html[data-theme="dark"] .detail-top,
+  html[data-theme="dark"] .sidebar-footer,
+  html[data-theme="dark"] .detail-properties,
+  html[data-theme="dark"] .notes-section,
+  html[data-theme="dark"] .detail-actions,
+  html[data-theme="dark"] .calendar-lane,
+  html[data-theme="dark"] .calendar-lane-heading,
+  html[data-theme="dark"] .calendar-day,
+  html[data-theme="dark"] .calendar-events-heading,
+  html[data-theme="dark"] .note-list,
+  html[data-theme="dark"] .note-list-head,
+  html[data-theme="dark"] .settings-panel,
+  html[data-theme="dark"] .theme-option,
+  html[data-theme="dark"] .trash-row,
+  html[data-theme="dark"] .task-row { border-color: var(--border-strong); }
+  html[data-theme="dark"] .sidebar-brand,
+  html[data-theme="dark"] .page-heading h1,
+  html[data-theme="dark"] .task-row-content > strong,
+  html[data-theme="dark"] .task-title-input,
+  html[data-theme="dark"] .calendar-toolbar h2,
+  html[data-theme="dark"] .calendar-lane-heading h2,
+  html[data-theme="dark"] .calendar-events-heading h2,
+  html[data-theme="dark"] .note-title-input,
+  html[data-theme="dark"] .note-card strong,
+  html[data-theme="dark"] .trash-row strong,
+  html[data-theme="dark"] .settings-section-heading h2,
+  html[data-theme="dark"] .theme-options legend,
+  html[data-theme="dark"] .detail-placeholder > h3 { color: var(--text-primary); }
+  html[data-theme="dark"] .sidebar-heading,
+  html[data-theme="dark"] .nav-count,
+  html[data-theme="dark"] .sidebar-footer,
+  html[data-theme="dark"] .crumb,
+  html[data-theme="dark"] .crumb strong,
+  html[data-theme="dark"] .search-box,
+  html[data-theme="dark"] .search-box input,
+  html[data-theme="dark"] .page-description,
+  html[data-theme="dark"] .eyebrow,
+  html[data-theme="dark"] .task-meta,
+  html[data-theme="dark"] .add-task-row,
+  html[data-theme="dark"] .empty-state p,
+  html[data-theme="dark"] .property-label,
+  html[data-theme="dark"] .property-value,
+  html[data-theme="dark"] .property-value select,
+  html[data-theme="dark"] .property-value input[type="date"],
+  html[data-theme="dark"] .status-select,
+  html[data-theme="dark"] .section-title h3,
+  html[data-theme="dark"] .subtask-row,
+  html[data-theme="dark"] .subtask-add input,
+  html[data-theme="dark"] .task-note-head input,
+  html[data-theme="dark"] .detail-placeholder,
+  html[data-theme="dark"] .calendar-weekdays span,
+  html[data-theme="dark"] .calendar-events-empty,
+  html[data-theme="dark"] .note-list-head,
+  html[data-theme="dark"] .note-card span,
+  html[data-theme="dark"] .note-card small,
+  html[data-theme="dark"] .small-empty,
+  html[data-theme="dark"] .markdown-preview,
+  html[data-theme="dark"] .trash-row,
+  html[data-theme="dark"] .trash-row > span:not(.color-dot),
+  html[data-theme="dark"] .settings-section-heading p,
+  html[data-theme="dark"] .theme-options > p,
+  html[data-theme="dark"] .theme-option,
+  html[data-theme="dark"] .loading-screen { color: var(--text-secondary); }
+  html[data-theme="dark"] .icon-button,
+  html[data-theme="dark"] .group-actions button,
+  html[data-theme="dark"] .nav-item,
+  html[data-theme="dark"] .crumb-slash,
+  html[data-theme="dark"] .search-box input::placeholder,
+  html[data-theme="dark"] .task-title-input::placeholder,
+  html[data-theme="dark"] .subtask-add input::placeholder,
+  html[data-theme="dark"] .task-meta,
+  html[data-theme="dark"] .task-check,
+  html[data-theme="dark"] .task-more,
+  html[data-theme="dark"] .empty-state p,
+  html[data-theme="dark"] .section-title > span,
+  html[data-theme="dark"] .helper-text,
+  html[data-theme="dark"] .lane-empty,
+  html[data-theme="dark"] .calendar-day-count,
+  html[data-theme="dark"] .note-card span,
+  html[data-theme="dark"] .small-empty,
+  html[data-theme="dark"] .detail-placeholder > p { color: var(--text-muted); }
+  html[data-theme="dark"] .icon-button:hover,
+  html[data-theme="dark"] .nav-item:hover,
+  html[data-theme="dark"] .group-actions button:hover,
+  html[data-theme="dark"] .task-row:hover,
+  html[data-theme="dark"] .task-row.selected,
+  html[data-theme="dark"] .note-card:hover,
+  html[data-theme="dark"] .note-card.selected { background: var(--surface-hover); color: var(--text-primary); }
+  html[data-theme="dark"] .nav-item.active { background: var(--surface-selected); color: var(--accent-text); }
+  html[data-theme="dark"] .group-actions { border-color: var(--border-strong); box-shadow: 0 3px 10px #00000030; }
+  html[data-theme="dark"] .group-nav.active { color: var(--accent-text); }
+  html[data-theme="dark"] .topbar,
+  html[data-theme="dark"] .calendar-lane-heading,
+  html[data-theme="dark"] .note-list-head,
+  html[data-theme="dark"] .calendar-events-heading { border-bottom-color: var(--border-strong); }
+  html[data-theme="dark"] .secondary-button { border-color: var(--border-strong); background: var(--surface-raised); color: var(--text-secondary); }
+  html[data-theme="dark"] .secondary-button:hover { border-color: #4a9ab8; background: var(--surface-hover); color: var(--accent-text); }
+  html[data-theme="dark"] .task-row.is-overdue { background: #2b2023; }
+  html[data-theme="dark"] .overdue-lane { border-color: #553b3d; }
+  html[data-theme="dark"] .overdue-lane .calendar-lane-heading { background: #2a2022; }
+  html[data-theme="dark"] .calendar-day { background: var(--surface-raised); color: var(--text-secondary); }
+  html[data-theme="dark"] .calendar-day:hover,
+  html[data-theme="dark"] .calendar-day.has-tasks { border-color: #3a6478; background: var(--surface-hover); }
+  html[data-theme="dark"] .calendar-day.is-selected { border-color: var(--primary); }
+  html[data-theme="dark"] .calendar-day-number { color: var(--text-primary); }
+  html[data-theme="dark"] .calendar-day.is-today .calendar-day-number { background: var(--primary); color: var(--primary-foreground); }
+  html[data-theme="dark"] .calendar-panel,
+  html[data-theme="dark"] .calendar-events,
+  html[data-theme="dark"] .calendar-lane { background: var(--surface); }
+  html[data-theme="dark"] .note-card.selected,
+  html[data-theme="dark"] .note-card:hover { background: var(--surface-hover); }
+  html[data-theme="dark"] .note-create-form,
+  html[data-theme="dark"] .new-inline-form { border-color: var(--border-strong); }
+  html[data-theme="dark"] .task-row-content > strong { color: var(--text-primary); }
+  html[data-theme="dark"] .priority-chip { background: #3b3024; color: #edbd7d; }
+  html[data-theme="dark"] .archived-chip { background: #2a343d; color: #aab8c2; }
+  html[data-theme="dark"] .tab-count,
+  html[data-theme="dark"] .lane-count { background: #253640; color: #a9d8e9 !important; }
+  html[data-theme="dark"] .bucket-tabs { border-bottom-color: var(--border-strong); }
+  html[data-theme="dark"] .bucket-tabs button.selected,
+  html[data-theme="dark"] .text-button { color: var(--accent-text); }
+  html[data-theme="dark"] .add-task-row:hover,
+  html[data-theme="dark"] .text-button:hover { background: var(--surface-hover); color: var(--accent-text); }
+  html[data-theme="dark"] .empty-illustration,
+  html[data-theme="dark"] .detail-empty-mark { background: var(--accent-soft); color: var(--accent-text); }
+  html[data-theme="dark"] .empty-state h2 { color: var(--text-primary); }
+  html[data-theme="dark"] .check-circle,
+  html[data-theme="dark"] .mini-check { border-color: #536370; background: var(--surface-raised); }
+  html[data-theme="dark"] .check-circle:hover,
+  html[data-theme="dark"] .check-circle.checked,
+  html[data-theme="dark"] .mini-check.checked { border-color: var(--primary); background: var(--primary); }
+  html[data-theme="dark"] .color-picker button { border-color: var(--surface); box-shadow: 0 0 0 1px var(--border-strong); }
+  html[data-theme="dark"] .overdue-message { background: #332528; color: #f0a29b; }
+  html[data-theme="dark"] .due-chip.late { color: #f0a29b; }
+  html[data-theme="dark"] .subtask-add button { background: #263a45; color: #9edcf1; }
+  html[data-theme="dark"] .calendar-lane-heading { background: var(--surface); }
+  html[data-theme="dark"] .note-card small { color: #91b6c4; }
+  html[data-theme="dark"] .error-banner { background: #382728; color: #f0a29b; }
+  html[data-theme="dark"] .dev-storage-banner { border-color: #54482d; background: #302b20; color: #e4c78c; }
+  html[data-theme="dark"] .login-screen,
+  html[data-theme="dark"] .loading-screen { background: radial-gradient(ellipse at 50% 0%, #1d3542 0, #141d26 45%, #111922 100%); }
+  html[data-theme="dark"] .login-card { border-color: var(--border-strong); box-shadow: 0 18px 65px #00000030; }
+  html[data-theme="dark"] .login-card h1 { color: var(--text-primary); }
+  html[data-theme="dark"] .field-label { color: var(--text-secondary); }
+  html[data-theme="dark"] .text-field { border-color: var(--border-strong); background: var(--surface-raised); color: var(--text-primary); }
+  html[data-theme="dark"] .text-field:focus { border-color: var(--primary); }
+  html[data-theme="dark"] .theme-option { border-color: var(--border-strong); background: var(--surface-raised); color: var(--text-secondary); }
+  html[data-theme="dark"] .theme-option.selected { border-color: #4e9bb8; background: var(--accent-soft); color: var(--accent-text); }
+  html[data-theme="dark"] .theme-option:focus-within { outline-color: var(--primary); }
+  html[data-theme="dark"] .mobile-bottom-nav { border-top-color: var(--border-strong); background: var(--surface); }
+  html[data-theme="dark"] .mobile-bottom-nav button { color: var(--text-muted); }
+  html[data-theme="dark"] .mobile-bottom-nav button.active { color: var(--accent-text); }
+  html[data-theme="dark"] .sidebar-backdrop { background: #050a0ecc; }
+
+  @media (max-width: 680px) {
+    .theme-option-list { grid-template-columns: 1fr; }
+    .theme-option { min-height: 52px; }
+  }
